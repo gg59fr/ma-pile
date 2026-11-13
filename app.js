@@ -590,17 +590,22 @@ async function importBackup(file){
   const have = new Set(state.items.map(i => i.id));
   const todo = list.filter(x => x && x.id && !have.has(String(x.id)) && TYPES[x.type] && STATUS[x.status]);
   if (!todo.length) { msg('Rien à importer : toutes ces fiches sont déjà dans ta pile.'); return; }
-  importing = true; let done = 0, fail = 0;
+  importing = true; let done = 0, fail = 0, firstErr = '';
   for (const x of todo) {
     msg(`<span class="busy"><span class="spin"></span>Import en cours : ${done + fail} / ${todo.length}</span>`);
+    let uploaded = null;
     try {
       let photo = typeof x.photo === 'string' ? x.photo : null;
-      if (photo && photo.startsWith('data:')) photo = await store.uploadPhoto(dataToBlob(photo));
+      if (photo && photo.startsWith('data:')) photo = uploaded = await store.uploadPhoto(dataToBlob(photo));
       await store.put(String(x.id), {...x, photo});
       done++;
-    } catch (e) { fail++; }
+    } catch (e) {
+      fail++; if (!firstErr) firstErr = String(e && e.message || e);
+      if (uploaded) store.removePhoto(uploaded);
+    }
   }
   importing = false;
+  if (fail && !done) { msg(`Aucune fiche importée. Le serveur a répondu : « ${esc(firstErr)} ». Envoie-moi ce message si ça se reproduit.`); return; }
   const skipped = list.length - todo.length;
   msg(`<strong>${done} fiche${done > 1 ? 's' : ''} importée${done > 1 ? 's' : ''}.</strong>${skipped ? ` ${skipped} déjà présente${skipped > 1 ? 's' : ''}, ignorée${skipped > 1 ? 's' : ''}.` : ''}${fail ? ` ${fail} en échec : relance l’import pour réessayer.` : ''}`);
   store.reload().catch(() => {});
