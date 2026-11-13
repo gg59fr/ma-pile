@@ -45,6 +45,12 @@
     </div>
     <div class="chips" id="colChips" role="group" aria-label="Filtrer par type"></div>
     <div class="grid" id="colGrid"></div>
+    <button type="button" class="btn" id="mlBtn" style="align-self:flex-start">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V9m-5 5 5-5 5 5M5 4h14"/></svg>
+      Importer mes jeux Myludo
+    </button>
+    <input type="file" id="mlFile" accept=".json,.csv,application/json,text/csv" hidden>
+    <div class="panel" id="mlBox" hidden></div>
   </section>
 
   <section data-view="envies" id="v-envies" aria-labelledby="h-envies" hidden>

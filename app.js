@@ -192,7 +192,7 @@ function renderCollection(){
   grid.innerHTML = list.map(it => { const b = badgeOf(it); return `<button type="button" class="card" data-open="${esc(it.id)}">
       ${coverHTML(it)}
       <span class="meta"><span class="t">${esc(titleOf(it))}</span>
-      <span class="w">${state.identifying.has(it.id) ? '<span class="busy"><span class="spin"></span>Envoi de la photo…</span>' : state.coverBusy.has(it.id) ? '<span class="busy"><span class="spin"></span>Recherche en ligne…</span>' : esc(it.creator || (it.type === 'lego' && it.detail ? 'Set ' + it.detail : ''))}</span></span>
+      <span class="w">${state.identifying.has(it.id) ? '<span class="busy"><span class="spin"></span>Envoi de la photo…</span>' : state.coverBusy.has(it.id) ? '<span class="busy"><span class="spin"></span>Recherche en ligne…</span>' : esc(it.creator || (it.type === 'lego' && it.detail ? 'Set ' + it.detail : it.type === 'jeu' && it.extra && it.extra.players ? `${it.extra.players} joueurs` : ''))}</span></span>
       ${b ? `<span class="badge${it.type === 'lego' && it.cond === 'boite' ? ' hot' : ''}">${esc(b)}</span>` : ''}
     </button>`; }).join('');
 }
@@ -758,13 +758,13 @@ function renderStats(){
 }
 
 /* ---------- Goodreads import (CSV export) ---------- */
-function parseCSV(text){
+function parseCSV(text, delim = ','){
   const rows = []; let row = [], f = '', q = false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (q) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
     else if (c === '"') q = true;
-    else if (c === ',') { row.push(f); f = ''; }
+    else if (c === delim) { row.push(f); f = ''; }
     else if (c === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
     else if (c !== '\r') f += c;
   }
@@ -772,6 +772,95 @@ function parseCSV(text){
   return rows;
 }
 const grDate = s => { const m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})/.exec((s || '').trim()); return m ? new Date(+m[1], +m[2] - 1, +m[3], 12).getTime() : null; };
+/* ---------- Myludo import (JSON export, CSV accepted) ----------
+   Keys seen in Myludo exports: ID, Titre, Sous-titre, Édition (year), Type (basegame, standalone,
+   extension), Joueur(s) "2 — 4", Durée 90 or "30 — 45", Gamme(s), EAN. Flags vary, so they are read loosely. */
+const ml = { games: [], withExt: false, busy: false };
+const plain = k => String(k).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+const mlKey = (o, rx) => { const k = Object.keys(o).find(k => rx.test(plain(k))); return k === undefined ? undefined : o[k]; };
+const mlRange = v => v == null || v === '' ? '' : String(v).replace(/\s*[—–]\s*|\s+-\s+/g, ' à ').trim();
+const truthy = v => v === true || v === 1 || /^(1|oui|yes|true|x|vrai)$/i.test(String(v ?? '').trim());
+function mlParse(text){
+  const t = text.replace(/^﻿/, '').trim();
+  let rows;
+  if (t.startsWith('[') || t.startsWith('{')) {
+    const j = JSON.parse(t);
+    rows = Array.isArray(j) ? j : (j.games || j.jeux || j.items || Object.values(j).find(Array.isArray) || []);
+  } else {
+    const first = t.split('\n')[0], d = (first.match(/;/g) || []).length > (first.match(/,/g) || []).length ? ';' : ',';
+    const r = parseCSV(t, d), h = (r[0] || []).map(x => x.trim());
+    rows = r.slice(1).filter(x => x.length > 1).map(x => Object.fromEntries(h.map((k, i) => [k, x[i]])));
+  }
+  if (!rows.length || !rows.some(o => o && typeof o === 'object' && mlKey(o, /^(titre|title|nom|name)$/) !== undefined)) return null;
+  return rows.map(o => {
+    const title = String(mlKey(o, /^(titre|title|nom|name)$/) ?? '').trim(), sub = String(mlKey(o, /^sous-?titre$/) ?? '').trim();
+    const kind = plain(mlKey(o, /^type$/) ?? '');
+    const playsRaw = mlKey(o, /parties|nb.*jou|played|plays/);
+    return {
+      id: String(mlKey(o, /^id$/) ?? '').trim(), title: sub ? `${title} : ${sub}` : title, kind, ext: /extension|expansion/.test(kind),
+      year: +(mlKey(o, /^edition$/) ?? mlKey(o, /annee|year/)) || null,
+      players: mlRange(mlKey(o, /^joueur/)), time: mlRange(mlKey(o, /^duree/)),
+      line: [].concat(mlKey(o, /^gamme/) ?? []).filter(Boolean).join(', '),
+      ean: [].concat(mlKey(o, /^ean$/) ?? []).map(String).filter(Boolean)[0] || null,
+      wish: truthy(mlKey(o, /envie|souhait|wish/)), plays: Math.max(0, parseInt(playsRaw, 10) || 0) };
+  }).filter(g => g.title);
+}
+const mlFind = g => find('ml-' + g.id) || state.items.find(i => i.type === 'jeu' && (i.title || '').toLowerCase() === g.title.toLowerCase());
+function mlRender(msg){
+  const box = $('mlBox'); box.hidden = false;
+  if (msg) { box.innerHTML = `<p>${msg}</p><div class="acts"><button type="button" class="link" data-ml="close">Fermer</button></div>`; return; }
+  const exts = ml.games.filter(g => g.ext).length;
+  const pick = ml.games.filter(g => ml.withExt || !g.ext);
+  const fresh = pick.filter(g => !mlFind(g)), known = pick.length - fresh.length, wish = fresh.filter(g => g.wish).length;
+  box.innerHTML = `<div class="top"><h2>Import Myludo</h2><span class="sub">${ml.games.length} fiche${ml.games.length > 1 ? 's' : ''} dans le fichier</span></div>
+    ${exts ? `<label class="check"><input type="checkbox" id="mlExt"${ml.withExt ? ' checked' : ''}> Importer aussi ${exts > 1 ? `les ${exts} extensions` : 'l’extension'}</label>` : ''}
+    <p>${fresh.length ? `<strong>${fresh.length} jeu${fresh.length > 1 ? 'x' : ''} à ajouter</strong> : ${fresh.length - wish} dans ta collection${wish ? `, ${wish} dans tes envies` : ''}.` : '<strong>Aucun nouveau jeu.</strong>'}${known ? ` ${known} déjà là : je complète leurs fiches, sans doublon.` : ''}</p>
+    ${fresh.length ? `<ol>${fresh.slice(0, 5).map(g => `<li>${esc(g.title)}${g.players ? ` · ${esc(g.players)} joueurs` : ''}${g.time ? ` · ${esc(g.time)} min` : ''}</li>`).join('')}${fresh.length > 5 ? `<li style="list-style:none;color:var(--muted)">et ${fresh.length - 5} autres</li>` : ''}</ol>` : ''}
+    <div class="acts">${fresh.length || known ? `<button type="button" class="btn sun" data-ml="go">${fresh.length ? `Importer ${fresh.length} jeu${fresh.length > 1 ? 'x' : ''}` : 'Compléter les fiches'}</button>` : ''}<button type="button" class="link" data-ml="close">Annuler</button></div>`;
+}
+async function mlImport(){
+  if (ml.busy || !store) return;
+  ml.busy = true;
+  const pick = ml.games.filter(g => ml.withExt || !g.ext), now = Date.now();
+  let added = 0, filled = 0, fail = 0;
+  for (const g of pick) {
+    $('mlBox').innerHTML = `<p class="busy"><span class="spin"></span>Import en cours : ${added + filled + fail} / ${pick.length}</p>`;
+    const ex = { players: g.players || undefined, time: g.time || undefined, myludo: g.id || undefined, ean: g.ean || undefined, kind: g.kind || undefined };
+    const it = mlFind(g);
+    if (it) {
+      const extra = { ...ex, ...(it.extra || {}) }, patch = {};
+      if (JSON.stringify(extra) !== JSON.stringify(it.extra || {})) patch.extra = extra;
+      if (!it.pubYear && g.year) patch.pubYear = g.year;
+      if (!it.plays && g.plays) patch.plays = g.plays;
+      if (Object.keys(patch).length) { save(it.id, patch); filled++; }
+      continue;
+    }
+    try {
+      await store.put(g.id ? 'ml-' + g.id : store.newId(), { type: 'jeu', owned: !g.wish, ownedAt: g.wish ? null : now, status: g.wish ? 'pile' : 'collection',
+        title: g.title.slice(0, 200), creator: '', detail: g.ext ? ['Extension', g.line].filter(Boolean).join(' · ').slice(0, 80) : '', note: 'Importé de Myludo',
+        photo: null, pubYear: g.year, plays: g.plays, extra: JSON.parse(JSON.stringify(ex)), source: 'myludo', createdAt: now, updatedAt: now });
+      added++;
+    } catch (e) { fail++; }
+    await new Promise(r => setTimeout(r, 60));
+  }
+  ml.busy = false;
+  state.colFilter = 'jeu'; renderAll();
+  mlRender(`<strong>${added} jeu${added > 1 ? 'x' : ''} ajouté${added > 1 ? 's' : ''}</strong>${filled ? `, ${filled} fiche${filled > 1 ? 's' : ''} complétée${filled > 1 ? 's' : ''}` : ''}.${fail ? ` ${fail} en échec : relance l’import pour les reprendre.` : ''} Les images arriveront avec la recherche automatique des jeux ; en attendant, ajoute une photo depuis la fiche si tu veux.`);
+}
+$('mlBtn').onclick = () => { if (!store) { toast('Encore un instant, tes fiches se chargent.'); return; } $('mlFile').click(); };
+$('mlFile').onchange = async e => {
+  const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
+  if (/\.xlsx?$/i.test(f.name)) { mlRender('Les fichiers Excel ne sont pas lus. Dans Myludo, choisis l’export JSON (ou CSV).'); return; }
+  try {
+    const games = mlParse(await f.text());
+    if (!games) { mlRender('Ce fichier ne ressemble pas à un export Myludo. Choisis l’export JSON de ta ludothèque.'); return; }
+    ml.games = games; ml.withExt = false; mlRender(); $('mlBox').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  } catch (err) { mlRender('Impossible de lire ce fichier. Choisis l’export JSON de ta ludothèque Myludo.'); }
+};
+$('mlBox').addEventListener('change', e => { if (e.target.id === 'mlExt') { ml.withExt = e.target.checked; mlRender(); } });
+$('mlBox').addEventListener('click', e => { const b = e.target.closest('[data-ml]'); if (!b) return;
+  if (b.dataset.ml === 'go') mlImport(); else if (!ml.busy) { $('mlBox').hidden = true; $('mlBox').innerHTML = ''; } });
+
 const gr = { books: [], year: null, busy: false };
 function grParse(text){
   const rows = parseCSV(text.replace(/^﻿/, ''));
