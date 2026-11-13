@@ -645,6 +645,55 @@ $('copyGifts').onclick = () => {
   try { navigator.clipboard.writeText(text).then(() => toast('Liste copiée. Colle-la dans un message.'), fallback); } catch (err) { fallback(); }
 };
 
+/* ---------- shared gift list (public link) ---------- */
+let giftLink = null, giftLinkArmed = false;
+const newToken = () => { const a = new Uint8Array(18); crypto.getRandomValues(a); return btoa(String.fromCharCode(...a)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const giftUrl = t => new URL('cadeaux.html#' + t, location.href.split('#')[0]).href;
+function renderGiftLink(){
+  $('shareLabel').textContent = giftLink ? 'Partager le lien' : 'Créer le lien de partage';
+  if (document.activeElement !== $('giftTitle')) $('giftTitle').value = giftLink ? giftLink.title : '';
+  $('newGiftLink').hidden = !giftLink;
+  $('newGiftLink').textContent = giftLinkArmed ? 'Confirmer : l’ancien lien ne marchera plus' : 'Changer le lien';
+}
+async function loadGiftLink(){
+  try { const { data } = await sb.from('gift_lists').select('token,title').maybeSingle(); giftLink = data || null; } catch (e) {}
+  renderGiftLink();
+}
+async function shareText(url, title){
+  if (navigator.share) {
+    try { await navigator.share({ title, text: `${title} : mes idées de cadeaux`, url }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(url); toast('Lien copié. Colle-le dans un message.'); }
+  catch (e) { const ta = $('giftText'); ta.value = url; ta.hidden = false; ta.focus(); ta.select(); toast('Sélectionne le lien et copie-le.'); }
+}
+$('shareGifts').onclick = async () => {
+  if (!sb || !user) return;
+  if (giftLink) { shareText(giftUrl(giftLink.token), giftLink.title); return; }
+  // First time: create the link, then a second tap shares it (iOS only opens the share sheet straight from a tap).
+  const title = $('giftTitle').value.trim() || 'Ma liste cadeaux';
+  const { data, error } = await sb.from('gift_lists').insert({ user_id: user.id, token: newToken(), title }).select('token,title').single();
+  if (error) { toast('Création du lien impossible. Vérifie ta connexion et réessaie.'); return; }
+  giftLink = data; renderGiftLink();
+  toast('Lien créé. Touche « Partager le lien » pour l’envoyer.');
+};
+$('giftTitle').addEventListener('change', async () => {
+  const title = $('giftTitle').value.trim().slice(0, 80) || 'Ma liste cadeaux';
+  if (!giftLink) return;
+  const { error } = await sb.from('gift_lists').update({ title }).eq('user_id', user.id);
+  if (error) toast('Titre non enregistré. Réessaie.'); else { giftLink.title = title; toast('Titre enregistré'); }
+});
+$('newGiftLink').onclick = async () => {
+  if (!giftLink) return;
+  if (!giftLinkArmed) { giftLinkArmed = true; renderGiftLink(); setTimeout(() => { giftLinkArmed = false; renderGiftLink(); }, 6000); return; }
+  giftLinkArmed = false;
+  const token = newToken();
+  const { error } = await sb.from('gift_lists').update({ token }).eq('user_id', user.id);
+  if (error) { toast('Changement impossible. Réessaie.'); renderGiftLink(); return; }
+  giftLink.token = token; renderGiftLink();
+  toast('Nouveau lien créé. L’ancien ne s’ouvre plus.');
+};
+
 /* ---------- barcode scan (ISBN) ---------- */
 const ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
 let zxingLoad = null;
@@ -905,6 +954,7 @@ function enter(u){
   if (user) return;
   user = u; lock(false);
   store = supabaseStore(sb, u.id);
+  loadGiftLink();
   store.subscribe(items => {
     for (const [id, it] of pendingNew) { if (items.some(x => x.id === id)) pendingNew.delete(id); else items.push(it); }
     state.items = items; state.ready = true; renderAll();

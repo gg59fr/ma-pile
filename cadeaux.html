@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Liste cadeaux</title>
+<meta name="description" content="Une liste d’idées cadeaux à réserver pour éviter les doublons.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#F6EFE2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C1814" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main class="app pub" aria-labelledby="pTitle">
+  <header class="head">
+    <div class="brand"><span class="brick sun" aria-hidden="true"></span><h1 id="pTitle">Liste cadeaux</h1></div>
+    <p class="sub" id="pSub" aria-live="polite">Chargement de la liste…</p>
+  </header>
+  <p class="pub-info" id="pInfo" hidden>Tu veux offrir quelque chose ? Touche « Je l’offre » : les autres verront que c’est pris, et la personne ne le saura pas.</p>
+  <ul class="rows" id="pList"></ul>
+  <p class="pub-foot">Liste tenue avec Ma Pile.</p>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+<script type="module" src="cadeaux.js"></script>
+</body>
+</html>

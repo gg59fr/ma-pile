@@ -230,3 +230,20 @@ img{max-width:100%}
 .scan-manual input::placeholder{color:#CFC4B3;letter-spacing:0}
 .scan-manual .btn{box-shadow:none;border-color:#F6EFE2}
 .scan-link{color:#F6EFE2}
+
+/* Public gift list page */
+.pub{padding-block:32px 48px}
+.pub-info{margin:0;padding:12px 14px;border:2px dashed var(--dash);border-radius:12px;font-size:14px;color:var(--muted)}
+.pub-row{display:flex;align-items:center;gap:14px;padding:10px 12px 10px 10px;background:var(--surface);border:2px solid var(--line);border-radius:14px}
+.pub-row .mini{flex:none;width:50px;aspect-ratio:3/4;border:2px solid var(--line);border-radius:5px;background-color:var(--c);overflow:hidden}
+.pub-row .mini img{width:100%;height:100%;object-fit:cover;display:block}
+.pub-row .meta{flex:1}
+.pub-row .meta .t{white-space:normal;font-size:15px}
+.pub-row.taken{opacity:.62}
+.pub-act{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.pub-btn{min-height:44px;padding:0 14px;font-size:14px;box-shadow:3px 3px 0 var(--shadow)}
+.pub-state{font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap}
+.pub-state.ok{color:var(--ok)}
+.pub-act .link{padding:4px 0;font-size:13px}
+.pub-foot{margin:8px 0 0;font-size:12px;color:var(--muted);text-align:center}
+@media (max-width:360px){.pub-row{flex-wrap:wrap}.pub-act{flex-direction:row;align-items:center;gap:12px;width:100%;justify-content:flex-end}}

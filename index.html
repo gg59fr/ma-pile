@@ -51,14 +51,17 @@
   <section data-view="cadeaux" id="v-cadeaux" aria-labelledby="h-cadeaux" hidden>
     <header class="head">
       <div class="brand"><span class="brick sun" aria-hidden="true"></span><h1 id="h-cadeaux">Liste cadeaux</h1></div>
-      <p class="sub">Les envies que tu aimerais qu’on t’offre. Copie la liste et envoie-la par message.</p>
+      <p class="sub">Les envies que tu aimerais qu’on t’offre. Envoie le lien : tes proches ouvrent la liste sans compte et réservent un cadeau pour éviter les doublons.</p>
     </header>
     <div class="panel">
       <div class="top"><h2>Ma liste</h2><span class="sub" id="giftCount"></span></div>
-      <button type="button" class="btn accent" id="copyGifts">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>
-        Copier la liste
+      <button type="button" class="btn accent" id="shareGifts">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 8l5-5 5 5M5 13v8h14v-8"/></svg>
+        <span id="shareLabel">Partager le lien</span>
       </button>
+      <p class="sub" id="giftLinkInfo">Les réservations restent invisibles dans ton app : la surprise est gardée.</p>
+      <div class="field"><label for="giftTitle">Titre affiché sur la liste</label><input id="giftTitle" maxlength="80" autocomplete="off" placeholder="Ma liste cadeaux"></div>
+      <div class="acts"><button type="button" class="link" id="copyGifts">Copier la liste en texte</button><button type="button" class="link" id="newGiftLink">Changer le lien</button></div>
       <label for="giftText" class="sr">Texte de la liste</label>
       <textarea id="giftText" readonly hidden></textarea>
     </div>

@@ -25,8 +25,9 @@ Après une modification, change `VERSION` dans `sw.js` pour que les téléphones
 | --- | --- |
 | `index.html` | Écrans et menus |
 | `styles.css` | Apparence (thème clair et sombre) |
-| `app.js` | Logique de l'app, synchronisation Supabase, import Goodreads, sauvegarde |
+| `app.js` | Logique de l'app, synchronisation Supabase, couvertures, scan ISBN, partage, import Goodreads, sauvegarde |
 | `config.js` | Adresse et clé publique Supabase |
+| `cadeaux.html`, `cadeaux.js` | Page publique de la liste cadeaux (réservations) |
 | `sw.js` | Fonctionnement hors connexion |
 | `manifest.webmanifest`, `icons/` | Installation sur l'écran d'accueil |
 | `supabase/schema.sql` | Table, stockage des photos et règles d'accès |
