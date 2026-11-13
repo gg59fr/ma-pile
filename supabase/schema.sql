@@ -29,10 +29,10 @@ drop policy if exists "items: read own"   on public.items;
 drop policy if exists "items: insert own" on public.items;
 drop policy if exists "items: update own" on public.items;
 drop policy if exists "items: delete own" on public.items;
-create policy "items: read own"   on public.items for select to authenticated using (auth.uid() = user_id);
-create policy "items: insert own" on public.items for insert to authenticated with check (auth.uid() = user_id);
-create policy "items: update own" on public.items for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "items: delete own" on public.items for delete to authenticated using (auth.uid() = user_id);
+create policy "items: read own"   on public.items for select to authenticated using ((select auth.uid()) = user_id);
+create policy "items: insert own" on public.items for insert to authenticated with check ((select auth.uid()) = user_id);
+create policy "items: update own" on public.items for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+create policy "items: delete own" on public.items for delete to authenticated using ((select auth.uid()) = user_id);
 
 -- Live sync between phone and computer.
 do $$ begin
@@ -51,8 +51,8 @@ drop policy if exists "photos: upload own" on storage.objects;
 drop policy if exists "photos: update own" on storage.objects;
 drop policy if exists "photos: delete own" on storage.objects;
 create policy "photos: upload own" on storage.objects for insert to authenticated
-  with check (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
+  with check (bucket_id = 'photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
 create policy "photos: update own" on storage.objects for update to authenticated
-  using (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
+  using (bucket_id = 'photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
 create policy "photos: delete own" on storage.objects for delete to authenticated
-  using (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
+  using (bucket_id = 'photos' and (storage.foldername(name))[1] = (select auth.uid())::text);

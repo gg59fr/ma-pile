@@ -8,13 +8,12 @@ PWA perso pour noter ce que je veux acheter (livres, BD, jeux, Lego, objets), g�
 
 ## Installation
 
-1. **Supabase** : dans le tableau de bord du projet, ouvre *SQL Editor*, colle le contenu de `supabase/schema.sql` et clique sur *Run*.
-2. **Clés** : dans *Project Settings › API*, copie *Project URL* et la clé *anon public* dans `config.js`.
-3. **Adresse du site** : dans *Authentication › URL Configuration*, mets `https://gg59fr.github.io/ma-pile/` comme *Site URL* et ajoute-la aux *Redirect URLs*.
-4. **GitHub Pages** : *Settings › Pages*, source *Deploy from a branch*, branche `main`, dossier `/ (root)`.
-5. **Premier compte** : ouvre le site, *Créer mon compte*, confirme l'e-mail, puis connecte-toi.
-6. **Fermer les inscriptions** : dans *Authentication › Sign In / Providers*, désactive *Allow new users to sign up* pour que personne d'autre ne crée de compte.
-7. **Sur l'iPhone** : ouvre le site dans Safari, bouton Partager › *Sur l'écran d'accueil*.
+1. **Base Supabase** : déjà créée (projet `gxeaueokgolhgulaqodk`) avec `supabase/schema.sql`. Pour un nouveau projet : *SQL Editor*, coller le fichier, *Run*, puis renseigner `config.js`.
+2. **Mon compte** : *Authentication › Users › Add user › Create new user*, avec *Auto Confirm User* coché.
+3. **Fermer les inscriptions** : *Authentication › Sign In / Providers*, désactiver *Allow new users to sign up*.
+4. **GitHub Pages** : *Settings › Pages*, source *Deploy from a branch*, branche `main`, dossier `/ (root)`. Le site est servi sur `https://gg59fr.github.io/ma-pile/`.
+5. **Sur l'iPhone** : ouvrir le site dans Safari, se connecter, puis Partager › *Sur l'écran d'accueil*.
+6. **Reprendre la version de test** : dans l'app, bouton compte › *Importer une sauvegarde*.
 
 ## Mettre à jour
 
