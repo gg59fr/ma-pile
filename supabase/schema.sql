@@ -135,3 +135,6 @@ end $$;
 
 revoke all on function public.gift_list(text), public.reserve_gift(text, text), public.unreserve_gift(text, text, text) from public;
 grant execute on function public.gift_list(text), public.reserve_gift(text, text), public.unreserve_gift(text, text, text) to anon, authenticated;
+
+-- Drop default privileges the app never uses (TRUNCATE would bypass row-level security).
+revoke truncate, trigger, references on table public.items, public.gift_lists, public.reservations from anon, authenticated;
