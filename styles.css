@@ -288,3 +288,11 @@ img{max-width:100%}
 .addmenu .addto button+button{border-top:none;border-radius:8px}
 .addmenu .addto button[aria-checked="true"]{background:var(--ink);color:var(--bg);font-weight:700}
 .addmenu .addto + button{border-top:none}
+
+/* Stats: collection section */
+.stat-h{margin:6px 0 0;font-size:22px}
+.colstats{list-style:none;margin:0;padding:4px 14px;border:2px solid var(--line);border-radius:14px;background:var(--surface)}
+.colstats li{display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:10px;padding:10px 0;font-size:14px}
+.colstats li+li{border-top:2px dashed var(--dash)}
+.colstats span{color:var(--muted)}
+.link.inl{padding:0;font-size:inherit;color:var(--ink)}

@@ -655,6 +655,32 @@ async function fillDetails(){
 const MOIS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 const plur = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const fmtNum = n => Math.round(n).toLocaleString('fr-FR');
+/* Collection section: what I own today, Lego status and pieces, games played, additions this year. */
+function collectionStats(){
+  const owned = state.items.filter(i => i.owned);
+  if (!owned.length) return `<h2 class="stat-h">Ma collection</h2><div class="empty"><strong>Collection vide</strong>Ajoute tes Lego, jeux, livres ou objets avec le bouton +, ou touche « Je l’ai » sur une envie.</div>`;
+  const by = k => owned.filter(i => i.type === k);
+  const lego = by('lego'), jeux = by('jeu'), books = owned.filter(isBook), objets = by('objet');
+  const pieces = lego.reduce((t, i) => t + ((i.extra && i.extra.pieces) || 0), 0);
+  const cond = k => lego.filter(i => i.cond === k).length;
+  const plays = jeux.reduce((t, i) => t + (i.plays || 0), 0);
+  const top = jeux.filter(i => i.plays).sort((a, b) => b.plays - a.plays).slice(0, 3);
+  const year = new Date().getFullYear();
+  const added = owned.filter(i => i.ownedAt && new Date(i.ownedAt).getFullYear() === year).length;
+  const read = books.filter(i => i.status === 'termine').length;
+  const tile = (n, label, type) => `<div class="tile"><b>${fmtNum(n)}</b><span>${type ? `<i class="sw" style="--c:${TYPES[type].c}"></i>` : ''}${label}</span></div>`;
+  const lines = [
+    lego.length && `<li><strong>Lego</strong><span>${[cond('construit') && `${cond('construit')} construit${cond('construit') > 1 ? 's' : ''}`, cond('boite') && `${cond('boite')} en boîte`, cond('demonte') && `${cond('demonte')} démonté${cond('demonte') > 1 ? 's' : ''}`, pieces && `${fmtNum(pieces)} pièces`].filter(Boolean).join(' · ') || 'État à renseigner dans les fiches'}</span></li>`,
+    jeux.length && `<li><strong>Jeux</strong><span>${plays ? `${plays} partie${plays > 1 ? 's' : ''} jouée${plays > 1 ? 's' : ''}` : 'Aucune partie notée'}${top.length ? ` · ${top.map(i => `<button type="button" class="link inl" data-open="${esc(i.id)}">${esc(titleOf(i))}</button> (${i.plays})`).join(', ')}` : ''}</span></li>`,
+    books.length && `<li><strong>Livres et BD</strong><span>${read} lu${read > 1 ? 's' : ''} · ${books.length - read} à lire${books.some(i => i.format === 'numerique') ? ` · ${books.filter(i => i.format === 'numerique').length} numérique${books.filter(i => i.format === 'numerique').length > 1 ? 's' : ''}` : ''}</span></li>`,
+    added && `<li><strong>${year}</strong><span>${added} ajout${added > 1 ? 's' : ''} à la collection</span></li>`
+  ].filter(Boolean).join('');
+  return `<h2 class="stat-h">Ma collection</h2><div style="display:flex;flex-direction:column;gap:12px;margin-bottom:8px">
+    <div class="tiles">${tile(lego.length, 'Lego', 'lego')}${tile(jeux.length, jeux.length > 1 ? 'jeux' : 'jeu', 'jeu')}${tile(books.length, 'livres et BD', 'livre')}</div>
+    ${objets.length ? `<p class="chart-note">et ${objets.length} objet${objets.length > 1 ? 's' : ''}</p>` : ''}
+    ${lines ? `<ul class="colstats">${lines}</ul>` : ''}
+  </div>`;
+}
 const compact = n => n >= 1000 ? (n / 1000).toLocaleString('fr-FR', {maximumFractionDigits: 1}) + 'k' : String(n);
 function renderStats(){
   const when = i => new Date(i.doneAt || i.updatedAt || 0);
@@ -663,12 +689,14 @@ function renderStats(){
   const years = [...new Set(reads.map(i => when(i).getFullYear()).concat(cur))].sort((a, b) => b - a);
   if (!years.includes(state.statYear)) state.statYear = cur;
   const y = state.statYear, mode = state.statMode === 'pages' ? 'pages' : 'count';
-  $('statYears').innerHTML = years.map(yy => `<button type="button" class="chip" data-syear="${yy}" aria-pressed="${yy === y}">${yy}</button>`).join('');
+  $('statYears').hidden = true;
+  const yearChips = years.length > 1 ? `<div class="chips" role="group" aria-label="Année des lectures">${years.map(yy => `<button type="button" class="chip" data-syear="${yy}" aria-pressed="${yy === y}">${yy}</button>`).join('')}</div>` : '';
   const body = $('statBody');
   if (!state.ready) { body.innerHTML = '<p class="sub">Chargement…</p>'; return; }
+  const colHtml = collectionStats();
   const list = reads.filter(i => when(i).getFullYear() === y).sort((a, b) => when(a) - when(b));
   if (!list.length) {
-    body.innerHTML = `<div class="empty"><strong>Aucune lecture terminée en ${y}</strong>Range un livre ou une BD dans « Terminé » depuis sa fiche, ou importe tes lectures Goodreads depuis l’onglet Lectures.</div>`;
+    body.innerHTML = colHtml + `<h2 class="stat-h">Lectures ${y}</h2>${yearChips}<div class="empty"><strong>Aucune lecture terminée en ${y}</strong>Range un livre ou une BD dans « Terminé » depuis sa fiche, ou importe tes lectures Goodreads depuis l’onglet Lectures.</div>`;
     return;
   }
   const val = i => mode === 'pages' ? (i.pages || 0) : 1;
@@ -693,7 +721,7 @@ function renderStats(){
   const gc = {}; list.forEach(i => { const g = i.genre || ''; gc[g] = (gc[g] || 0) + 1; });
   const grows = Object.entries(gc).sort((a, b) => (a[0] === '') - (b[0] === '') || b[1] - a[1]);
   const gmax = Math.max(...grows.map(r => r[1]));
-  body.innerHTML = `<div style="display:flex;flex-direction:column;gap:16px">
+  body.innerHTML = colHtml + `<h2 class="stat-h">Lectures ${y}</h2>${yearChips}<div style="display:flex;flex-direction:column;gap:16px;margin-top:12px">
     <div class="tiles">
       <div class="tile"><b>${list.length}</b><span>${list.length > 1 ? 'lectures' : 'lecture'}</span></div>
       <div class="tile"><b>${nl}</b><span><i class="sw" style="--c:${TYPES.livre.c}"></i>${nl > 1 ? 'livres' : 'livre'}</span></div>
