@@ -673,7 +673,8 @@ function grRender(msg){
     <div class="acts">${fresh.length || fill.length ? `<button type="button" class="btn sun" data-gr="go">${fresh.length ? `Importer ${fresh.length} livre${fresh.length > 1 ? 's' : ''}` : `Compléter ${fill.length} fiche${fill.length > 1 ? 's' : ''}`}</button>` : ''}<button type="button" class="link" data-gr="close">Annuler</button></div>`;
 }
 function grFillable(books){
-  return books.map(b => ({b, it: find('gr-' + b.gid)})).filter(({b, it}) => it &&
+  const byTitle = b => state.items.find(i => SHELVES.includes(i.status) && (i.title || '').toLowerCase() === b.title.toLowerCase());
+  return books.map(b => ({b, it: find('gr-' + b.gid) || byTitle(b)})).filter(({b, it}) => it &&
     ((!it.pages && b.pages) || (!it.pubYear && b.pubYear) || (!it.publisher && b.publisher) || (!it.isbn && b.isbn) || (!it.genre && b.genre)));
 }
 async function grImport(){
