@@ -16,12 +16,14 @@ create table if not exists public.items (
   photo       text,
   source      text,
   cover_from  text,
+  isbn        text,
   created_at  bigint not null default (extract(epoch from now()) * 1000)::bigint,
   updated_at  bigint not null default (extract(epoch from now()) * 1000)::bigint,
   done_at     bigint
 );
 create index if not exists items_user_idx on public.items (user_id);
 create index if not exists items_user_status_idx on public.items (user_id, status);
+create index if not exists items_user_isbn_idx on public.items (user_id, isbn) where isbn is not null;
 
 -- Only the owner reads and writes their own records.
 -- New Supabase projects no longer grant table access to signed-in users by default.

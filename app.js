@@ -50,12 +50,12 @@ const writeCache = items => { try { localStorage.setItem(CACHE_KEY, JSON.stringi
 const toRow = (id, d, uid) => ({
   id, user_id: uid, type: d.type || 'livre', status: d.status || 'pile',
   title: d.title || '', creator: d.creator || '', detail: d.detail || '', note: d.note || '',
-  photo: d.photo || null, source: d.source || null, cover_from: d.coverFrom || null,
+  photo: d.photo || null, source: d.source || null, cover_from: d.coverFrom || null, isbn: d.isbn || null,
   created_at: Math.round(d.createdAt || Date.now()), updated_at: Math.round(d.updatedAt || Date.now()),
   done_at: d.doneAt ? Math.round(d.doneAt) : null });
 const fromRow = r => ({
   id: r.id, type: r.type, status: r.status, title: r.title, creator: r.creator, detail: r.detail, note: r.note,
-  photo: r.photo, source: r.source, coverFrom: r.cover_from,
+  photo: r.photo, source: r.source, coverFrom: r.cover_from, isbn: r.isbn || null,
   createdAt: Number(r.created_at), updatedAt: Number(r.updated_at), doneAt: r.done_at == null ? null : Number(r.done_at) });
 const photoPath = url => { const m = String(url || '').match(/\/storage\/v1\/object\/public\/photos\/(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
 
@@ -624,7 +624,8 @@ $('fab').onclick = () => { if (!store) { toast('Encore un instant, ta pile se ch
 $('addMenu').addEventListener('click', e => {
   const b = e.target.closest('[data-add]'); if (!b) return;
   setMenu(false); state.camTarget = null;
-  if (b.dataset.add === 'cam') $('cam').click(); else if (b.dataset.add === 'lib') $('lib').click(); else addManual();
+  if (b.dataset.add === 'scan') openScanner();
+  else if (b.dataset.add === 'cam') $('cam').click(); else if (b.dataset.add === 'lib') $('lib').click(); else addManual();
 });
 document.addEventListener('pointerdown', e => { if (!$('addMenu').hidden && !e.target.closest('#addMenu, #fab')) setMenu(false); });
 $('cam').onchange = $('lib').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) onPhoto(f); };
@@ -636,13 +637,163 @@ let lbReturn = null;
 function openPhoto(src, from){ lbReturn = from || null; $('lbImg').src = src; $('lightbox').hidden = false; $('lbClose').focus({preventScroll: true}); }
 function closePhoto(){ if ($('lightbox').hidden) return false; $('lightbox').hidden = true; $('lbImg').removeAttribute('src'); if (lbReturn && document.contains(lbReturn)) lbReturn.focus({preventScroll: true}); lbReturn = null; return true; }
 $('lightbox').addEventListener('click', e => { e.stopPropagation(); closePhoto(); });
-document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen) closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('scanner').hidden) { closeScanner(); return; } if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen) closeSheet(); });
 window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
 $('copyGifts').onclick = () => {
   const text = giftText(), ta = $('giftText');
   const fallback = () => { ta.value = text; ta.hidden = false; ta.focus(); ta.select(); toast('Sélectionne le texte et copie-le.'); };
   try { navigator.clipboard.writeText(text).then(() => toast('Liste copiée. Colle-la dans un message.'), fallback); } catch (err) { fallback(); }
 };
+
+/* ---------- barcode scan (ISBN) ---------- */
+const ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+let zxingLoad = null;
+function loadZXing(){
+  if (window.ZXing) return Promise.resolve(window.ZXing);
+  return zxingLoad || (zxingLoad = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = ZXING_URL; sc.async = true;
+    sc.onload = () => window.ZXing ? res(window.ZXing) : rej(new Error('zxing'));
+    sc.onerror = () => { zxingLoad = null; rej(new Error('zxing')); };
+    document.head.appendChild(sc);
+  }));
+}
+function zxingReader(Z){
+  const hints = new Map();
+  hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A]);
+  hints.set(Z.DecodeHintType.TRY_HARDER, true);
+  const reader = new Z.MultiFormatReader(); reader.setHints(hints);
+  return canvas => { try { return reader.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(canvas)))).getText(); } catch (e) { return null; } };
+}
+const check13 = b => String((10 - [...b].reduce((t, d, i) => t + (+d) * (i % 2 ? 3 : 1), 0) % 10) % 10);
+function toIsbn13(raw){
+  const v = String(raw || '').toUpperCase().replace(/[^0-9X]/g, '');
+  if (/^97[89]\d{10}$/.test(v)) return check13(v.slice(0, 12)) === v[12] ? v : null;
+  if (/^\d{9}[\dX]$/.test(v)) { const sum = [...v].reduce((t, c, i) => t + (c === 'X' ? 10 : +c) * (10 - i), 0); if (sum % 11) return null; const b = '978' + v.slice(0, 9); return b + check13(b); }
+  return null;
+}
+// Only Google Books categories are reliable enough to call something a comic;
+// Open Library mixes the subjects of every edition (a novel's comic adaptation, for one).
+const BD_RX = /comics|graphic novel|bande[s]?[ -]dessin|manga/i;
+async function lookupIsbn(isbn){
+  try {
+    const d = await fetchJSON(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+    const b = d && d['ISBN:' + isbn];
+    if (b && b.title) return {
+      title: b.title, creator: (b.authors || []).map(a => a.name).join(', '),
+      photo: b.cover ? (b.cover.large || b.cover.medium || null) : null, coverFrom: 'openlibrary' };
+  } catch (e) {}
+  try {
+    const p = new URLSearchParams({q: 'isbn:' + isbn, maxResults: '1', fields: 'items(id,volumeInfo(title,subtitle,authors,imageLinks,categories))'});
+    if (GOOGLE_BOOKS_KEY) p.set('key', GOOGLE_BOOKS_KEY);
+    const d = await fetchJSON('https://www.googleapis.com/books/v1/volumes?' + p);
+    const v = d.items && d.items[0], vi = v && v.volumeInfo;
+    if (vi && vi.title) return {
+      title: vi.title, creator: (vi.authors || []).join(', '),
+      photo: vi.imageLinks ? `https://books.google.com/books/content?id=${encodeURIComponent(v.id)}&printsec=frontcover&img=1&zoom=1` : null, coverFrom: 'googlebooks',
+      type: BD_RX.test((vi.categories || []).join(' ')) ? 'bd' : undefined };
+  } catch (e) {}
+  return null;
+}
+const scan = { stream: null, timer: null, busy: false, session: 0 };
+const scanHint = t => { $('scanHint').textContent = t; };
+async function openScanner(){
+  if (!store) { toast('Encore un instant, ta pile se charge.'); return; }
+  const session = ++scan.session;
+  scan.busy = false; $('isbnIn').value = '';
+  $('scanner').hidden = false; document.body.style.overflow = 'hidden';
+  scanHint('Vise le code-barres au dos du livre.');
+  $('scanClose').focus({preventScroll: true});
+  loadZXing().catch(() => {});
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { scanHint('Caméra indisponible ici. Prends le code-barres en photo ou tape l’ISBN.'); return; }
+  try {
+    scan.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+  } catch (e) { scanHint('Pas d’accès à la caméra. Autorise-la dans Réglages, prends le code-barres en photo ou tape l’ISBN.'); return; }
+  if (session !== scan.session || $('scanner').hidden) { stopStream(); return; }
+  const v = $('scanVideo'); v.srcObject = scan.stream; await v.play().catch(() => {});
+  let detect = null;
+  if ('BarcodeDetector' in window) {
+    try {
+      const fm = await window.BarcodeDetector.getSupportedFormats();
+      if (fm.includes('ean_13')) { const bd = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a'] }); detect = async () => { const r = await bd.detect(v); return r[0] ? r[0].rawValue : null; }; }
+    } catch (e) {}
+  }
+  if (!detect) {
+    let Z; try { Z = await loadZXing(); } catch (e) { scanHint('Le lecteur de code-barres n’a pas pu se charger. Tape l’ISBN.'); return; }
+    const read = zxingReader(Z), c = document.createElement('canvas'), ctx = c.getContext('2d', { willReadFrequently: true });
+    detect = async () => {
+      const w = v.videoWidth, h = v.videoHeight; if (!w) return null;
+      const cw = Math.round(w * 0.85), ch = Math.round(h * 0.45);
+      c.width = cw; c.height = ch; ctx.drawImage(v, (w - cw) / 2, (h - ch) / 2, cw, ch, 0, 0, cw, ch);
+      return read(c);
+    };
+  }
+  const loop = async () => {
+    if (session !== scan.session || $('scanner').hidden || scan.busy) return;
+    let code = null; try { code = await detect(); } catch (e) {}
+    if (code && toIsbn13(code) !== null || code && /^\d{8,13}$/.test(code)) { onCode(code); return; }
+    scan.timer = setTimeout(loop, 160);
+  };
+  loop();
+}
+function stopStream(){ if (scan.stream) { scan.stream.getTracks().forEach(t => t.stop()); scan.stream = null; } }
+function closeScanner(){
+  scan.session++; clearTimeout(scan.timer); stopStream();
+  const v = $('scanVideo'); v.pause(); v.srcObject = null;
+  $('scanner').hidden = true; document.body.style.overflow = '';
+}
+async function decodePhoto(file){
+  scanHint('Lecture de la photo…');
+  let Z; try { Z = await loadZXing(); } catch (e) { scanHint('Le lecteur de code-barres n’a pas pu se charger. Tape l’ISBN.'); return; }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image(); img.src = url; await img.decode();
+    const read = zxingReader(Z), c = document.createElement('canvas'), ctx = c.getContext('2d', { willReadFrequently: true });
+    const s = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const W = Math.round(img.naturalWidth * s), H = Math.round(img.naturalHeight * s);
+    const tries = [[0, 0, W, H], [0, H * 0.25, W, H * 0.5], [W * 0.1, H * 0.35, W * 0.8, H * 0.3]];
+    for (const [x, y, w, h] of tries) {
+      c.width = Math.round(w); c.height = Math.round(h);
+      ctx.drawImage(img, x / s, y / s, w / s, h / s, 0, 0, c.width, c.height);
+      const code = read(c); if (code) { onCode(code); return; }
+    }
+    scanHint('Je ne trouve pas de code-barres sur cette photo. Rapproche-toi, ou tape l’ISBN.');
+  } catch (e) { scanHint('Cette image ne s’ouvre pas. Essaie une autre photo.'); }
+  finally { URL.revokeObjectURL(url); }
+}
+async function onCode(raw){
+  if (scan.busy) return; scan.busy = true;
+  clearTimeout(scan.timer);
+  const code = String(raw).replace(/[^0-9X]/gi, '');
+  const isbn = toIsbn13(code);
+  if (!isbn) {
+    if (/^\d{8,13}$/.test(code) && !/^97[89]/.test(code)) {
+      closeScanner();
+      createFromScan({ note: `Code-barres ${code}`, type: ['jeu', 'lego', 'objet'].includes(state.filter) ? state.filter : 'objet' }, 'Ce code-barres n’est pas celui d’un livre : indique le titre et choisis le type.');
+    } else { scan.busy = false; scanHint('Ce numéro n’est pas un ISBN valide. Vérifie les chiffres.'); }
+    return;
+  }
+  const dup = state.items.find(i => i.isbn === isbn);
+  if (dup) { closeScanner(); openSheet(dup.id); toast(`Déjà dans tes fiches : « ${STATUS[dup.status] || ''} »`); return; }
+  stopStream(); scanHint(`ISBN ${isbn} lu. Recherche du livre…`);
+  const info = await lookupIsbn(isbn);
+  closeScanner();
+  if (info) createFromScan({ ...info, isbn }, info.photo ? 'Fiche remplie d’après le code-barres : vérifie et corrige si besoin.' : 'Livre trouvé, sans couverture : je cherche une couverture ailleurs en fermant la fiche.');
+  else createFromScan({ isbn, note: `ISBN ${isbn}` }, navigator.onLine ? 'ISBN introuvable en ligne : indique le titre et l’auteur.' : 'Pas de connexion : indique le titre, la couverture sera cherchée plus tard.');
+}
+function createFromScan(d, note){
+  const now = Date.now(), id = store.newId();
+  const it = { id, type: d.type || (['livre', 'bd'].includes(state.filter) ? state.filter : 'livre'), status: state.view === 'cadeaux' ? 'cadeau' : 'pile',
+    title: d.title || '', creator: d.creator || '', detail: '', note: d.note || '', photo: d.photo || null, coverFrom: d.photo ? d.coverFrom : null,
+    isbn: d.isbn || null, createdAt: now, updatedAt: now };
+  if (state.view === 'etageres' || state.view === 'stats') setView('pile');
+  createItem(it); state.idNote[id] = note; renderAll(); openSheet(id);
+  if (!it.title) setTimeout(() => $('fTitle') && $('fTitle').focus(), 60);
+}
+$('scanClose').onclick = closeScanner;
+$('scanPhoto').onclick = () => $('scanFile').click();
+$('scanFile').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) decodePhoto(f); };
+$('isbnForm').addEventListener('submit', e => { e.preventDefault(); const v = $('isbnIn').value.trim(); if (!v) { scanHint('Tape les 10 ou 13 chiffres de l’ISBN.'); return; } scan.busy = false; onCode(v); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && !$('scanner').hidden) closeScanner(); });
 
 /* ---------- account + backup ---------- */
 const USER_SVG = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>';
