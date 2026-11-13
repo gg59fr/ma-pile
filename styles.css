@@ -253,7 +253,9 @@ img{max-width:100%}
 .publine{margin-top:-6px}
 
 /* Stats: pages and genres */
-.tile-sub{font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .tile-sub{font-size:12px;font-weight:700;color:var(--ink);line-height:1.25;white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;text-decoration:underline;text-underline-offset:2px}
+.tile-link{font:inherit;color:inherit;text-align:left;cursor:pointer;box-shadow:3px 3px 0 var(--shadow)}
+.tile-link:active{transform:translate(2px,2px);box-shadow:none}
 .mini-seg{display:flex;padding:3px;border:2px solid var(--line);border-radius:999px;background:var(--bg)}
 .mini-seg button{min-height:34px;padding:0 12px;border:none;border-radius:999px;background:none;font-size:13px;font-weight:600;cursor:pointer}
 .mini-seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);font-weight:700}

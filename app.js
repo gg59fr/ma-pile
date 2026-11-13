@@ -588,7 +588,7 @@ function renderStats(){
     <div class="tiles">
       <div class="tile"><b>${withPages.length ? compact(pagesTotal) : '—'}</b><span>pages lues</span></div>
       <div class="tile"><b>${withPages.length ? fmtNum(avgPages) : '—'}</b><span>pages par livre</span></div>
-      <div class="tile">${longest ? `<b>${fmtNum(longest.pages)}</b><span class="tile-sub" title="${esc(titleOf(longest))}">plus long : ${esc(titleOf(longest))}</span>` : '<b>—</b><span>plus long</span>'}</div>
+      ${longest ? `<button type="button" class="tile tile-link" data-open="${esc(longest.id)}" aria-label="Plus long : ${esc(titleOf(longest))}, ${longest.pages} pages. Ouvrir la fiche"><b>${fmtNum(longest.pages)}</b><span>plus long</span><span class="tile-sub">${esc(titleOf(longest))}</span></button>` : '<div class="tile"><b>—</b><span>plus long</span></div>'}
     </div>
     ${missing ? `<p class="chart-note">${missing} lecture${missing > 1 ? 's' : ''} sans nombre de pages. Complète-les dans la fiche, ou avec « Compléter mes fiches » dans ton compte.</p>` : ''}
     <div class="chart">
