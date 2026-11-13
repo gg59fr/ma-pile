@@ -1,6 +1,6 @@
 // Ma Pile service worker: the app shell opens offline, photos are kept once seen.
 // Bump VERSION on every release so phones pick up the new files.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const SHELL = `mapile-shell-${VERSION}`;
 const RUNTIME = 'mapile-runtime';
 const PHOTOS = 'mapile-photos';
@@ -26,6 +26,11 @@ self.addEventListener('fetch', e => {
 
   // Photos in Supabase Storage: cache first, they never change once uploaded.
   if (url.pathname.includes('/storage/v1/object/public/')) {
+    e.respondWith(cacheFirst(req, PHOTOS));
+    return;
+  }
+  // Covers found online: cache first as well.
+  if (/(^|\.)(covers\.openlibrary\.org|archive\.org)$/.test(url.hostname) || (url.hostname === 'books.google.com' && url.pathname.startsWith('/books/content'))) {
     e.respondWith(cacheFirst(req, PHOTOS));
     return;
   }

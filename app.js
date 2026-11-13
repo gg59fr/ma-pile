@@ -1,5 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+import * as CONFIG from './config.js';
+const { SUPABASE_URL, SUPABASE_ANON_KEY } = CONFIG;
+const GOOGLE_BOOKS_KEY = CONFIG.GOOGLE_BOOKS_KEY || '';
 
 (function(){
 const TYPES = {
@@ -34,7 +36,7 @@ const allowedMoves = it => {
   const out = base.filter(s => s !== it.status); if (it.status !== 'pile') out.push('pile'); return out; };
 
 const state = { items: [], ready: false, view: 'pile', filter: 'all', q: '', shelf: 'termine',
-  openId: null, identifying: new Set(), idNote: {}, previews: {}, camTarget: null, delArmed: false, accountOpen: false };
+  openId: null, identifying: new Set(), idNote: {}, previews: {}, coverBusy: new Set(), coverTried: {}, camTarget: null, delArmed: false, accountOpen: false };
 let store = null, sb = null, user = null;
 const pendingNew = new Map();
 function createItem(it){ pendingNew.set(it.id, it); state.items.push(it); put(it.id, it); }
@@ -158,7 +160,7 @@ function renderPile(){
   grid.innerHTML = list.map(it => `<button type="button" class="card" data-open="${esc(it.id)}">
       ${coverHTML(it)}
       <span class="meta"><span class="t">${esc(titleOf(it))}</span>
-      <span class="w">${state.identifying.has(it.id) ? '<span class="busy"><span class="spin"></span>Envoi de la photo…</span>' : esc(it.creator || ago(it.createdAt))}</span></span>
+      <span class="w">${state.identifying.has(it.id) ? '<span class="busy"><span class="spin"></span>Envoi de la photo…</span>' : state.coverBusy.has(it.id) ? '<span class="busy"><span class="spin"></span>Recherche de couverture…</span>' : esc(it.creator || ago(it.createdAt))}</span></span>
     </button>`).join('');
 }
 
@@ -231,7 +233,9 @@ function closeSheet(){
   if (state.accountOpen) { state.accountOpen = false; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = ''; return; }
   if (!state.openId) return;
   flushSave();
+  const closed = state.openId;
   state.openId = null; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = '';
+  autoCover(closed);
 }
 function refreshSheet(){
   const it = state.openId && find(state.openId);
@@ -245,7 +249,13 @@ function refreshSheet(){
   $('sCover').innerHTML = shown ? `<button type="button" class="zoom" data-act="zoom" aria-label="Voir la photo en grand">${cov}</button>` : cov;
   $('sPill').innerHTML = `${svg(it.status, 16, ICOLOR[it.status])} ${STATUS[it.status] || ''}`;
   $('sPhoto').textContent = shown ? 'Changer la photo' : 'Ajouter une photo';
-  $('sId').innerHTML = state.identifying.has(it.id) ? '<span class="busy"><span class="spin"></span>Envoi de la photo…</span>' : esc(state.idNote[it.id] || '');
+  const busy = state.identifying.has(it.id) ? 'Envoi de la photo…' : state.coverBusy.has(it.id) ? 'Recherche de couverture…' : '';
+  const canCover = !shown && (it.type === 'livre' || it.type === 'bd');
+  const fromWeb = it.photo && it.coverFrom && it.coverFrom !== 'none';
+  $('sId').innerHTML = busy ? `<span class="busy"><span class="spin"></span>${busy}</span>`
+    : esc(state.idNote[it.id] || (fromWeb ? `Couverture trouvée en ligne (${it.coverFrom === 'googlebooks' ? 'Google Books' : 'Open Library'}).` : ''))
+      + (canCover ? ' <button type="button" class="link" data-act="cover" style="padding:4px 0">Chercher une couverture</button>' : '')
+      + (fromWeb ? ' <button type="button" class="link" data-act="uncover" style="padding:4px 0">Pas la bonne ? Retirer</button>' : '');
   document.querySelectorAll('#fType .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === it.type)));
   const moves = allowedMoves(it);
   const primary = moves.includes('cadeau') ? 'cadeau' : null;
@@ -364,6 +374,84 @@ function addManual(){
 }
 
 function renderAll(){ renderPile(); renderGifts(); renderShelf(); renderStats(); refreshSheet(); }
+
+/* ---------- automatic covers (Open Library, then Google Books) ----------
+   Rule: when an author is known, the cover must come from a book by that author;
+   with a title only, the title must be identical. The first matching edition wins. */
+const normT = t => String(t || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, ' ').replace(/\b(l|d|le|la|les|un|une|des|du|de|the|a|an)\b/g, ' ').replace(/\s+/g, ' ').trim();
+const cleanTitle = t => String(t || '').replace(/\s*\((french|english) edition\)/ig, '').replace(/\s*\([^)]*\)\s*$/, '').split(/\s+[-–:]\s+/)[0].trim();
+const lastNames = a => String(a || '').split(/,|&|;|\/|\bet\b|\band\b/i).map(x => normT(x).split(' ').filter(Boolean).pop()).filter(w => w && w.length > 1);
+function authorMatches(wanted, names){
+  const want = lastNames(wanted); if (!want.length) return true;
+  const got = new Set((names || []).flatMap(n => normT(n).split(' ')));
+  return want.some(w => got.has(w));
+}
+async function fetchJSON(url, tries = 2){
+  for (let k = 1; ; k++) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 12000);
+    try { const r = await fetch(url, {signal: ctl.signal}); if (!r.ok) throw Object.assign(new Error('HTTP ' + r.status), {status: r.status}); return await r.json(); }
+    catch (e) { if (k >= tries || (e.status && e.status < 500 && e.status !== 429)) throw e; await new Promise(r => setTimeout(r, 800)); }
+    finally { clearTimeout(t); }
+  }
+}
+async function findCover(rawTitle, author){
+  const title = cleanTitle(rawTitle);
+  const ok = (t, names) => author ? authorMatches(author, names) : normT(t) === normT(title);
+  try {
+    const p = new URLSearchParams({title, fields: 'cover_i,title,author_name', limit: '10'}); if (author) p.set('author', author);
+    const d = await fetchJSON('https://openlibrary.org/search.json?' + p);
+    for (const doc of d.docs || []) if (doc.cover_i && ok(doc.title, doc.author_name))
+      return {url: `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`, from: 'openlibrary'};
+  } catch (e) {}
+  try {
+    const p = new URLSearchParams({q: `intitle:${title}` + (author ? ` inauthor:${lastNames(author)[0] || author}` : ''), maxResults: '10', printType: 'books', fields: 'items(id,volumeInfo(title,authors,imageLinks))'});
+    if (GOOGLE_BOOKS_KEY) p.set('key', GOOGLE_BOOKS_KEY);
+    const d = await fetchJSON('https://www.googleapis.com/books/v1/volumes?' + p);
+    for (const v of d.items || []) { const vi = v.volumeInfo || {};
+      if (vi.imageLinks && ok(vi.title, vi.authors))
+        return {url: `https://books.google.com/books/content?id=${encodeURIComponent(v.id)}&printsec=frontcover&img=1&zoom=1`, from: 'googlebooks'}; }
+  } catch (e) {}
+  return null;
+}
+async function autoCover(id, force){
+  const it = find(id);
+  if (!it || it.photo || state.previews[id] || !(it.type === 'livre' || it.type === 'bd') || state.coverBusy.has(id)) return false;
+  if (!force && it.coverFrom === 'none') return false;
+  const title = (it.title || '').trim(), creator = (it.creator || '').trim();
+  if (title.length < 2) { if (force) { state.idNote[id] = 'Indique d’abord le titre.'; refreshSheet(); } return false; }
+  const key = normT(title) + '|' + normT(creator);
+  if (!force && state.coverTried[id] === key) return false;
+  state.coverTried[id] = key; state.coverBusy.add(id); renderAll();
+  let found = null;
+  try { found = await findCover(title, creator); } catch (e) {}
+  state.coverBusy.delete(id);
+  const cur = find(id);
+  if (found && cur && !cur.photo) {
+    save(id, {photo: found.url, coverFrom: found.from});
+    state.idNote[id] = creator ? 'Couverture trouvée en ligne.' : 'Couverture trouvée d’après le titre seul : vérifie que c’est le bon livre.';
+  } else if (!found) {
+    if (!navigator.onLine) delete state.coverTried[id];
+    state.idNote[id] = navigator.onLine ? 'Pas de couverture trouvée en ligne. Tu peux ajouter une photo.' : 'Pas de connexion : la couverture sera cherchée plus tard.';
+  }
+  renderAll();
+  return !!found;
+}
+let coverRun = false;
+async function fillCovers(){
+  const msg = t => { const m = $('accMsg'); if (m) m.innerHTML = t; };
+  if (coverRun) return;
+  const todo = state.items.filter(i => !i.photo && (i.type === 'livre' || i.type === 'bd') && i.coverFrom !== 'none' && (i.title || '').trim());
+  if (!todo.length) { msg('Toutes tes fiches de livres et BD ont déjà une image.'); return; }
+  coverRun = true; let n = 0, found = 0;
+  for (const it of todo) {
+    msg(`<span class="busy"><span class="spin"></span>Recherche des couvertures : ${n} / ${todo.length}</span>`);
+    if (await autoCover(it.id, true)) found++;
+    n++; await new Promise(r => setTimeout(r, 250));
+  }
+  coverRun = false;
+  msg(`<strong>${found} couverture${found > 1 ? 's' : ''} trouvée${found > 1 ? 's' : ''}</strong> sur ${todo.length} fiche${todo.length > 1 ? 's' : ''} sans image.${found < todo.length ? ' Pour les autres, ajoute une photo depuis la fiche.' : ''}`);
+}
 
 /* ---------- stats ---------- */
 const MOIS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
@@ -521,6 +609,8 @@ document.addEventListener('click', e => {
   else if (act === 'library') { state.camTarget = null; $('lib').click(); }
   else if (act === 'zoom' && state.openId) { const it = find(state.openId); const src = it && (it.photo || state.previews[it.id]); if (src) openPhoto(src, t); }
   else if (act === 'close') closeSheet();
+  else if (act === 'cover' && state.openId) { flushSave(); delete state.idNote[state.openId]; autoCover(state.openId, true); }
+  else if (act === 'uncover' && state.openId) { delete state.idNote[state.openId]; save(state.openId, {photo: null, coverFrom: 'none'}); renderAll(); toast('Couverture retirée. Tu peux ajouter une photo ou relancer la recherche.'); }
   else if (act === 'del') { state.delArmed = true; refreshSheet(); }
   else if (act === 'del-no') { state.delArmed = false; refreshSheet(); }
   else if (act === 'del-yes') { const id = state.openId; clearTimeout(saveTimer); state.openId = null; $('sheetWrap').hidden = true; document.body.style.overflow = '';
@@ -567,8 +657,13 @@ function openAccount(){
       <h2>Sauvegarde</h2>
       <p class="sub">Télécharge toutes tes fiches dans un fichier, ou importe un fichier de sauvegarde, par exemple celui de la version de test.</p>
       <div class="acts"><button type="button" class="btn" data-acc="export">Exporter mes fiches</button><button type="button" class="btn" data-acc="import">Importer une sauvegarde</button></div>
-      <p id="accMsg" aria-live="polite"></p>
     </div>
+    <div class="panel">
+      <h2>Couvertures</h2>
+      <p class="sub">Cherche en ligne une couverture pour chaque livre ou BD sans image.</p>
+      <div class="acts"><button type="button" class="btn" data-acc="covers">Chercher les couvertures manquantes</button></div>
+    </div>
+    <p id="accMsg" aria-live="polite"></p>
     <button type="button" class="link" data-acc="logout" style="align-self:flex-start">Se déconnecter</button>`;
   $('sheetWrap').hidden = false; document.body.style.overflow = 'hidden';
   $('sClose').focus({preventScroll: true});
@@ -614,6 +709,7 @@ $('sheet').addEventListener('click', e => {
   const b = e.target.closest('[data-acc]'); if (!b) return;
   if (b.dataset.acc === 'export') exportBackup();
   else if (b.dataset.acc === 'import') { if (!importing) $('backupFile').click(); }
+  else if (b.dataset.acc === 'covers') fillCovers();
   else if (b.dataset.acc === 'logout') { try { localStorage.removeItem(CACHE_KEY); } catch (err) {} sb.auth.signOut().finally(() => location.reload()); }
 });
 $('backupFile').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) importBackup(f); };
