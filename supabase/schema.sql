@@ -17,6 +17,11 @@ create table if not exists public.items (
   source      text,
   cover_from  text,
   isbn        text,
+  pages       integer check (pages is null or pages between 1 and 20000),
+  pub_year    integer check (pub_year is null or pub_year between 1000 and 2100),
+  publisher   text,
+  genre       text check (genre is null or genre in ('polar', 'sf', 'fantasy', 'horreur', 'roman', 'essai', 'jeunesse', 'autre')),
+  meta_checked bigint,
   created_at  bigint not null default (extract(epoch from now()) * 1000)::bigint,
   updated_at  bigint not null default (extract(epoch from now()) * 1000)::bigint,
   done_at     bigint

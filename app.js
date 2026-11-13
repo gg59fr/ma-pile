@@ -51,11 +51,13 @@ const toRow = (id, d, uid) => ({
   id, user_id: uid, type: d.type || 'livre', status: d.status || 'pile',
   title: d.title || '', creator: d.creator || '', detail: d.detail || '', note: d.note || '',
   photo: d.photo || null, source: d.source || null, cover_from: d.coverFrom || null, isbn: d.isbn || null,
+  pages: d.pages || null, pub_year: d.pubYear || null, publisher: d.publisher || null, genre: d.genre || null, meta_checked: d.metaChecked || null,
   created_at: Math.round(d.createdAt || Date.now()), updated_at: Math.round(d.updatedAt || Date.now()),
   done_at: d.doneAt ? Math.round(d.doneAt) : null });
 const fromRow = r => ({
   id: r.id, type: r.type, status: r.status, title: r.title, creator: r.creator, detail: r.detail, note: r.note,
   photo: r.photo, source: r.source, coverFrom: r.cover_from, isbn: r.isbn || null,
+  pages: r.pages || null, pubYear: r.pub_year || null, publisher: r.publisher || null, genre: r.genre || null, metaChecked: r.meta_checked ? Number(r.meta_checked) : null,
   createdAt: Number(r.created_at), updatedAt: Number(r.updated_at), doneAt: r.done_at == null ? null : Number(r.done_at) });
 const photoPath = url => { const m = String(url || '').match(/\/storage\/v1\/object\/public\/photos\/(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
 
@@ -219,6 +221,11 @@ function openSheet(id){
       <div class="field"><label for="fCreator">Auteur, éditeur ou marque</label><input id="fCreator" autocomplete="off" value="${esc(it.creator)}"></div>
       <div class="field"><label for="fDetail">Détail</label><input id="fDetail" autocomplete="off" value="${esc(it.detail)}" placeholder="Tome, n° de set…"></div>
     </div>
+    <div class="two" id="fBookRow">
+      <div class="field"><label for="fPages">Pages</label><input id="fPages" type="number" inputmode="numeric" min="1" max="20000" value="${it.pages || ''}" placeholder="—"></div>
+      <div class="field"><label for="fGenre">Genre</label><select id="fGenre"><option value="">À classer</option>${Object.entries(GENRES).map(([k, l]) => `<option value="${k}"${it.genre === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+    </div>
+    <p class="sub publine" id="fPub"></p>
     <div class="field"><span class="flabel" id="lType">Type</span>
       <div class="chips" role="group" aria-labelledby="lType" id="fType">${T.map(k => `<button type="button" class="chip" data-type="${k}" aria-pressed="${it.type === k}">${TYPES[k].label}</button>`).join('')}</div></div>
     <div class="field"><label for="fNote">Note</label><textarea id="fNote" rows="2" placeholder="Conseillé par…, prix vu, édition…">${esc(it.note)}</textarea></div>
@@ -235,7 +242,7 @@ function closeSheet(){
   flushSave();
   const closed = state.openId;
   state.openId = null; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = '';
-  autoCover(closed);
+  autoEnrich(closed);
 }
 function refreshSheet(){
   const it = state.openId && find(state.openId);
@@ -257,6 +264,9 @@ function refreshSheet(){
       + (canCover ? ' <button type="button" class="link" data-act="cover" style="padding:4px 0">Chercher une couverture</button>' : '')
       + (fromWeb ? ' <button type="button" class="link" data-act="uncover" style="padding:4px 0">Pas la bonne ? Retirer</button>' : '');
   document.querySelectorAll('#fType .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === it.type)));
+  $('fBookRow').hidden = !isBook(it);
+  const pub = [it.pubYear && `Paru en ${it.pubYear}`, it.publisher].filter(Boolean).join(' · ');
+  $('fPub').textContent = pub; $('fPub').hidden = !pub || !isBook(it);
   const moves = allowedMoves(it);
   const primary = moves.includes('cadeau') ? 'cadeau' : null;
   const rest = moves.filter(m => m !== primary && m !== 'pile');
@@ -272,15 +282,17 @@ function refreshSheet(){
 let saveTimer = null;
 function formPatch(){
   if (!state.openId || !$('fTitle')) return {};
+  const pg = parseInt($('fPages').value, 10);
   return { title: $('fTitle').value.trim().slice(0, 200), creator: $('fCreator').value.trim().slice(0, 200),
-    detail: $('fDetail').value.trim().slice(0, 80), note: $('fNote').value.slice(0, 2000) };
+    detail: $('fDetail').value.trim().slice(0, 80), note: $('fNote').value.slice(0, 2000),
+    pages: pg > 0 && pg <= 20000 ? pg : null, genre: GENRES[$('fGenre').value] ? $('fGenre').value : null };
 }
 function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 600); }
 function flushSave(){
   clearTimeout(saveTimer); saveTimer = null;
   const it = state.openId && find(state.openId); if (!it || !$('fTitle')) return;
   const p = formPatch();
-  if (['title','creator','detail','note'].every(k => (it[k] || '') === p[k])) return;
+  if (['title','creator','detail','note','pages','genre'].every(k => String(it[k] ?? '') === String(p[k] ?? ''))) return;
   const next = {...it, ...p, updatedAt: Date.now()};
   Object.assign(it, p);
   put(it.id, next);
@@ -375,9 +387,12 @@ function addManual(){
 
 function renderAll(){ renderPile(); renderGifts(); renderShelf(); renderStats(); refreshSheet(); }
 
-/* ---------- automatic covers (Open Library, then Google Books) ----------
-   Rule: when an author is known, the cover must come from a book by that author;
-   with a title only, the title must be identical. The first matching edition wins. */
+/* ---------- book details: cover, pages, year, publisher, genre ----------
+   Sources: BnF catalogue (best for French books), Open Library, then Google Books.
+   Rule: when an author is known, a match must be by that author; with a title only,
+   the title must be identical. The first matching edition wins. */
+const GENRES = { polar: 'Polar & thriller', sf: 'Science-fiction', fantasy: 'Fantasy', horreur: 'Horreur', roman: 'Roman', essai: 'Essai & document', jeunesse: 'Jeunesse', autre: 'Autre' };
+const isBook = it => it.type === 'livre' || it.type === 'bd';
 const normT = t => String(t || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
   .replace(/[^a-z0-9]+/g, ' ').replace(/\b(l|d|le|la|les|un|une|des|du|de|the|a|an)\b/g, ' ').replace(/\s+/g, ' ').trim();
 const cleanTitle = t => String(t || '').replace(/\s*\((french|english) edition\)/ig, '').replace(/\s*\([^)]*\)\s*$/, '').split(/\s+[-–:]\s+/)[0].trim();
@@ -387,118 +402,214 @@ function authorMatches(wanted, names){
   const got = new Set((names || []).flatMap(n => normT(n).split(' ')));
   return want.some(w => got.has(w));
 }
-async function fetchJSON(url, tries = 2){
+function genreFrom(text){
+  const t = String(text || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  if (!t.trim()) return null;
+  if (/thriller|polar|policier|crime|detective|myster|suspense|espionage|espionnage/.test(t)) return 'polar';
+  if (/science[- ]fiction|dystopi|cyberpunk|space opera|anticipation/.test(t)) return 'sf';
+  if (/fantasy|fantastique|litrpg/.test(t)) return 'fantasy';
+  if (/horror|horreur|epouvante/.test(t)) return 'horreur';
+  if (/juvenile|jeunesse|young adult|children/.test(t)) return 'jeunesse';
+  if (/essai|biograph|histoire|history|politi|document|nonfiction|non-fiction|memoir|temoignage/.test(t)) return 'essai';
+  if (/\broman\b|fiction|novel/.test(t)) return 'roman';
+  return null;
+}
+async function fetchWithRetry(url, as, tries = 2){
   for (let k = 1; ; k++) {
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 12000);
-    try { const r = await fetch(url, {signal: ctl.signal}); if (!r.ok) throw Object.assign(new Error('HTTP ' + r.status), {status: r.status}); return await r.json(); }
+    try { const r = await fetch(url, {signal: ctl.signal}); if (!r.ok) throw Object.assign(new Error('HTTP ' + r.status), {status: r.status}); return await (as === 'text' ? r.text() : r.json()); }
     catch (e) { if (k >= tries || (e.status && e.status < 500 && e.status !== 429)) throw e; await new Promise(r => setTimeout(r, 800)); }
     finally { clearTimeout(t); }
   }
 }
-async function findCover(rawTitle, author){
+const fetchJSON = url => fetchWithRetry(url, 'json');
+const titleOk = (found, title, author) => { const f = normT(found), w = normT(title); return author ? (f === w || f.startsWith(w)) : f === w; };
+async function fromBnF(title, author, isbn){
+  const ln = lastNames(author)[0];
+  const q = isbn ? `bib.isbn all "${isbn}"` : `bib.title all "${title.replace(/"/g, ' ')}"` + (ln ? ` and bib.author all "${ln}"` : '');
+  const xml = await fetchWithRetry('https://catalogue.bnf.fr/api/SRU?' + new URLSearchParams({version: '1.2', operation: 'searchRetrieve', query: q, recordSchema: 'dublincore', maximumRecords: '15'}), 'text');
+  const doc = new DOMParser().parseFromString(xml, 'application/xml'), DC = 'http://purl.org/dc/elements/1.1/';
+  let best = null;
+  for (const rec of doc.getElementsByTagNameNS('*', 'recordData')) {
+    const g = tag => [...rec.getElementsByTagNameNS(DC, tag)].map(e => e.textContent || '');
+    const full = (g('title')[0] || '').split(' / ')[0], main = full.split(' : ')[0];
+    if (!isbn && (!titleOk(main, title, author) || (author && !authorMatches(author, g('creator'))))) continue;
+    const pages = Math.max(0, ...g('format').flatMap(f => [...f.matchAll(/(\d{2,4})\s*p\./g)].map(m => +m[1]))) || null;
+    const yr = (g('date').join(' ').match(/\d{4}/) || [])[0];
+    const cand = { pages, year: yr ? +yr : null, publisher: ((g('publisher')[0] || '').replace(/\s*\([^)]*\)\s*$/, '').trim()) || null,
+      genreText: [full.includes(' : ') ? full.split(' : ').slice(1).join(' ') : '', ...g('subject')].join(' ') };
+    if (!best || (!best.pages && pages)) best = cand;
+    if (best.pages) break;
+  }
+  return best;
+}
+async function fromOpenLibrary(title, author, isbn){
+  if (isbn) {
+    const d = await fetchJSON(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`), b = d && d['ISBN:' + isbn];
+    if (b) return { cover: b.cover ? (b.cover.large || b.cover.medium) : null, pages: b.number_of_pages || null,
+      year: +((String(b.publish_date || '').match(/\d{4}/) || [])[0]) || null, publisher: b.publishers && b.publishers[0] ? b.publishers[0].name : null,
+      genreText: (b.subjects || []).map(x => x.name || x).join(' ') };
+  }
+  const p = new URLSearchParams({title, fields: 'cover_i,title,author_name,number_of_pages_median,first_publish_year,subject,publisher', limit: '10'}); if (author) p.set('author', author);
+  const d = await fetchJSON('https://openlibrary.org/search.json?' + p);
+  const ok = (d.docs || []).filter(x => author ? authorMatches(author, x.author_name) : titleOk(x.title, title, ''));
+  if (!ok.length) return null;
+  const withCover = ok.find(x => x.cover_i), first = ok[0];
+  return { cover: withCover ? `https://covers.openlibrary.org/b/id/${withCover.cover_i}-L.jpg` : null,
+    pages: (ok.find(x => x.number_of_pages_median) || {}).number_of_pages_median || null, year: first.first_publish_year || null,
+    publisher: (first.publisher || [])[0] || null, genreText: (first.subject || []).slice(0, 30).join(' ') };
+}
+async function fromGoogle(title, author, isbn){
+  const p = new URLSearchParams({q: isbn ? 'isbn:' + isbn : `intitle:${title}` + (author ? ` inauthor:${lastNames(author)[0] || author}` : ''), maxResults: '10', printType: 'books',
+    fields: 'items(id,volumeInfo(title,authors,imageLinks,pageCount,publishedDate,publisher,categories))'});
+  if (GOOGLE_BOOKS_KEY) p.set('key', GOOGLE_BOOKS_KEY);
+  const d = await fetchJSON('https://www.googleapis.com/books/v1/volumes?' + p);
+  const ok = (d.items || []).filter(v => isbn || (author ? authorMatches(author, (v.volumeInfo || {}).authors) : titleOk((v.volumeInfo || {}).title, title, '')));
+  if (!ok.length) return null;
+  const vi = ok[0].volumeInfo || {}, wc = ok.find(v => (v.volumeInfo || {}).imageLinks);
+  return { cover: wc ? `https://books.google.com/books/content?id=${encodeURIComponent(wc.id)}&printsec=frontcover&img=1&zoom=1` : null,
+    pages: (ok.map(v => (v.volumeInfo || {}).pageCount).find(n => n > 0)) || null, year: +((vi.publishedDate || '').slice(0, 4)) || null,
+    publisher: vi.publisher || null, genreText: ok.flatMap(v => (v.volumeInfo || {}).categories || []).join(' '), categories: (vi.categories || []).join(' ') };
+}
+async function findBook(rawTitle, author, isbn){
   const title = cleanTitle(rawTitle);
-  const ok = (t, names) => author ? authorMatches(author, names) : normT(t) === normT(title);
-  try {
-    const p = new URLSearchParams({title, fields: 'cover_i,title,author_name', limit: '10'}); if (author) p.set('author', author);
-    const d = await fetchJSON('https://openlibrary.org/search.json?' + p);
-    for (const doc of d.docs || []) if (doc.cover_i && ok(doc.title, doc.author_name))
-      return {url: `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`, from: 'openlibrary'};
-  } catch (e) {}
-  try {
-    const p = new URLSearchParams({q: `intitle:${title}` + (author ? ` inauthor:${lastNames(author)[0] || author}` : ''), maxResults: '10', printType: 'books', fields: 'items(id,volumeInfo(title,authors,imageLinks))'});
-    if (GOOGLE_BOOKS_KEY) p.set('key', GOOGLE_BOOKS_KEY);
-    const d = await fetchJSON('https://www.googleapis.com/books/v1/volumes?' + p);
-    for (const v of d.items || []) { const vi = v.volumeInfo || {};
-      if (vi.imageLinks && ok(vi.title, vi.authors))
-        return {url: `https://books.google.com/books/content?id=${encodeURIComponent(v.id)}&printsec=frontcover&img=1&zoom=1`, from: 'googlebooks'}; }
-  } catch (e) {}
-  return null;
+  const [bnf, ol] = await Promise.all([fromBnF(title, author, isbn).catch(() => null), fromOpenLibrary(title, author, isbn).catch(() => null)]);
+  let gb = null;
+  if (!(ol && ol.cover) || !((bnf && bnf.pages) || (ol && ol.pages))) gb = await fromGoogle(title, author, isbn).catch(() => null);
+  const pick = k => [bnf, ol, gb].map(x => x && x[k]).find(Boolean) || null;
+  return { found: !!(bnf || ol || gb),
+    cover: ol && ol.cover ? {url: ol.cover, from: 'openlibrary'} : gb && gb.cover ? {url: gb.cover, from: 'googlebooks'} : null,
+    pages: pick('pages'), year: pick('year'), publisher: pick('publisher'),
+    genre: genreFrom([bnf, ol, gb].map(x => x && x.genreText).join(' ')), comic: !!(gb && /comics|graphic novel/i.test(gb.categories || '')) };
 }
-async function autoCover(id, force){
+async function autoEnrich(id, force){
   const it = find(id);
-  if (!it || it.photo || state.previews[id] || !(it.type === 'livre' || it.type === 'bd') || state.coverBusy.has(id)) return false;
-  if (!force && it.coverFrom === 'none') return false;
+  if (!it || !isBook(it) || state.coverBusy.has(id)) return null;
   const title = (it.title || '').trim(), creator = (it.creator || '').trim();
-  if (title.length < 2) { if (force) { state.idNote[id] = 'Indique d’abord le titre.'; refreshSheet(); } return false; }
-  const key = normT(title) + '|' + normT(creator);
-  if (!force && state.coverTried[id] === key) return false;
+  if (title.length < 2) { if (force) { state.idNote[id] = 'Indique d’abord le titre.'; refreshSheet(); } return null; }
+  const wantCover = !it.photo && !state.previews[id] && (force || it.coverFrom !== 'none');
+  const wantMeta = force ? !(it.pages && it.genre && it.pubYear) : !it.metaChecked;
+  if (!wantCover && !wantMeta) return null;
+  const key = normT(title) + '|' + normT(creator) + '|' + (it.isbn || '');
+  if (!force && state.coverTried[id] === key) return null;
   state.coverTried[id] = key; state.coverBusy.add(id); renderAll();
-  let found = null;
-  try { found = await findCover(title, creator); } catch (e) {}
+  let r = null;
+  try { r = await findBook(title, creator, it.isbn); } catch (e) {}
   state.coverBusy.delete(id);
-  const cur = find(id);
-  if (found && cur && !cur.photo) {
-    save(id, {photo: found.url, coverFrom: found.from});
-    state.idNote[id] = creator ? 'Couverture trouvée en ligne.' : 'Couverture trouvée d’après le titre seul : vérifie que c’est le bon livre.';
-  } else if (!found) {
-    if (!navigator.onLine) delete state.coverTried[id];
-    state.idNote[id] = navigator.onLine ? 'Pas de couverture trouvée en ligne. Tu peux ajouter une photo.' : 'Pas de connexion : la couverture sera cherchée plus tard.';
+  const cur = find(id); if (!cur) return null;
+  if (!navigator.onLine && !(r && r.found)) {
+    delete state.coverTried[id]; state.idNote[id] = 'Pas de connexion : les infos seront cherchées plus tard.'; renderAll(); return null;
   }
+  const patch = { metaChecked: Date.now() };
+  if (r) {
+    if (wantCover && r.cover && !cur.photo) { patch.photo = r.cover.url; patch.coverFrom = r.cover.from; }
+    if (!cur.pages && r.pages) patch.pages = r.pages;
+    if (!cur.pubYear && r.year) patch.pubYear = r.year;
+    if (!cur.publisher && r.publisher) patch.publisher = r.publisher;
+    if (!cur.genre && r.genre) patch.genre = r.genre;
+  }
+  save(id, patch);
+  if (id === state.openId) {
+    if (patch.pages && $('fPages')) $('fPages').value = patch.pages;
+    if (patch.genre && $('fGenre')) $('fGenre').value = patch.genre;
+  }
+  const got = [patch.photo && 'couverture', patch.pages && `${patch.pages} pages`, patch.pubYear && `paru en ${patch.pubYear}`, patch.genre && GENRES[patch.genre].toLowerCase()].filter(Boolean);
+  state.idNote[id] = got.length
+    ? `Trouvé en ligne : ${got.join(', ')}.` + (patch.photo && !creator ? ' Titre seul : vérifie que c’est le bon livre.' : '')
+    : wantCover && !cur.photo ? 'Pas de couverture trouvée en ligne. Tu peux ajouter une photo.' : force ? 'Rien de plus trouvé en ligne.' : '';
   renderAll();
-  return !!found;
+  return patch;
 }
-let coverRun = false;
-async function fillCovers(){
+let detailsRun = false;
+async function fillDetails(){
   const msg = t => { const m = $('accMsg'); if (m) m.innerHTML = t; };
-  if (coverRun) return;
-  const todo = state.items.filter(i => !i.photo && (i.type === 'livre' || i.type === 'bd') && i.coverFrom !== 'none' && (i.title || '').trim());
-  if (!todo.length) { msg('Toutes tes fiches de livres et BD ont déjà une image.'); return; }
-  coverRun = true; let n = 0, found = 0;
+  if (detailsRun) return;
+  const todo = state.items.filter(i => isBook(i) && (i.title || '').trim() && ((!i.photo && i.coverFrom !== 'none') || !i.pages || !i.genre || !i.pubYear));
+  if (!todo.length) { msg('Tes livres et BD ont déjà couverture, pages, année et genre.'); return; }
+  detailsRun = true; let n = 0; const got = {photo: 0, pages: 0, genre: 0};
   for (const it of todo) {
-    msg(`<span class="busy"><span class="spin"></span>Recherche des couvertures : ${n} / ${todo.length}</span>`);
-    if (await autoCover(it.id, true)) found++;
-    n++; await new Promise(r => setTimeout(r, 250));
+    msg(`<span class="busy"><span class="spin"></span>Recherche en ligne : ${n} / ${todo.length}</span>`);
+    const p = await autoEnrich(it.id, true);
+    if (p) { if (p.photo) got.photo++; if (p.pages) got.pages++; if (p.genre) got.genre++; }
+    n++; await new Promise(r => setTimeout(r, 300));
   }
-  coverRun = false;
-  msg(`<strong>${found} couverture${found > 1 ? 's' : ''} trouvée${found > 1 ? 's' : ''}</strong> sur ${todo.length} fiche${todo.length > 1 ? 's' : ''} sans image.${found < todo.length ? ' Pour les autres, ajoute une photo depuis la fiche.' : ''}`);
+  detailsRun = false;
+  msg(`<strong>${todo.length} fiche${todo.length > 1 ? 's' : ''} vérifiée${todo.length > 1 ? 's' : ''}</strong> : ${got.photo} couverture${got.photo > 1 ? 's' : ''}, ${got.pages} nombre${got.pages > 1 ? 's' : ''} de pages et ${got.genre} genre${got.genre > 1 ? 's' : ''} trouvés. Le reste se complète à la main dans la fiche.`);
 }
 
 /* ---------- stats ---------- */
 const MOIS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 const plur = (n, one, many) => `${n} ${n > 1 ? many : one}`;
+const fmtNum = n => Math.round(n).toLocaleString('fr-FR');
+const compact = n => n >= 1000 ? (n / 1000).toLocaleString('fr-FR', {maximumFractionDigits: 1}) + 'k' : String(n);
 function renderStats(){
   const when = i => new Date(i.doneAt || i.updatedAt || 0);
-  const reads = state.items.filter(i => i.status === 'termine' && (i.type === 'livre' || i.type === 'bd'));
+  const reads = state.items.filter(i => i.status === 'termine' && isBook(i));
   const now = new Date(), cur = now.getFullYear();
   const years = [...new Set(reads.map(i => when(i).getFullYear()).concat(cur))].sort((a, b) => b - a);
   if (!years.includes(state.statYear)) state.statYear = cur;
-  const y = state.statYear;
+  const y = state.statYear, mode = state.statMode === 'pages' ? 'pages' : 'count';
   $('statYears').innerHTML = years.map(yy => `<button type="button" class="chip" data-syear="${yy}" aria-pressed="${yy === y}">${yy}</button>`).join('');
   const body = $('statBody');
   if (!state.ready) { body.innerHTML = '<p class="sub">Chargement…</p>'; return; }
   const list = reads.filter(i => when(i).getFullYear() === y).sort((a, b) => when(a) - when(b));
   if (!list.length) {
-    body.innerHTML = `<div class="empty"><strong>Aucune lecture terminée en ${y}</strong>Range un livre ou une BD dans « Terminé » depuis sa fiche, ou importe tes lectures Goodreads depuis l’onglet Étagères.</div>`;
+    body.innerHTML = `<div class="empty"><strong>Aucune lecture terminée en ${y}</strong>Range un livre ou une BD dans « Terminé » depuis sa fiche, ou importe tes lectures Goodreads depuis l’onglet Étagères.</div>`;
     return;
   }
+  const val = i => mode === 'pages' ? (i.pages || 0) : 1;
   const m = Array.from({length: 12}, () => ({livre: [], bd: []}));
   list.forEach(i => m[when(i).getMonth()][i.type].push(i));
-  const tot = k => m[k].livre.length + m[k].bd.length;
+  const sum = arr => arr.reduce((t, i) => t + val(i), 0);
+  const tot = k => sum(m[k].livre) + sum(m[k].bd);
   const max = Math.max(1, ...m.map((_, k) => tot(k)));
   const nl = list.filter(i => i.type === 'livre').length, nb = list.length - nl;
+  const withPages = list.filter(i => i.pages), pagesTotal = withPages.reduce((t, i) => t + i.pages, 0);
+  const avgPages = withPages.length ? pagesTotal / withPages.length : 0;
+  const longest = withPages.reduce((a, i) => !a || i.pages > a.pages ? i : a, null);
+  const missing = list.length - withPages.length;
   const lastM = y === cur ? now.getMonth() : 11;
-  const avg = (list.length / (lastM + 1)).toLocaleString('fr-FR', {maximumFractionDigits: 1});
   let best = 0; for (let k = 1; k < 12; k++) if (tot(k) > tot(best)) best = k;
-  const piece = (n, type) => n ? `<span class="piece m-${type}" style="--c:${TYPES[type].c};height:${(n / max * 100).toFixed(2)}%"></span>` : '';
+  const piece = (arr, type) => { const n = sum(arr); return n ? `<span class="piece m-${type}" style="--c:${TYPES[type].c};height:${(n / max * 100).toFixed(2)}%"></span>` : ''; };
   const label = MOIS.map((mm, k) => `${mm} ${tot(k)}`).join(', ');
+  const note = mode === 'pages'
+    ? `${fmtNum(pagesTotal / (lastM + 1))} pages par mois en moyenne${y === cur ? ' depuis janvier' : ''} · meilleur mois : ${MOIS[best].toLowerCase()} (${fmtNum(tot(best))} p.)${missing ? ` · ${missing} lecture${missing > 1 ? 's' : ''} sans nombre de pages, non comptée${missing > 1 ? 's' : ''}` : ''}`
+    : `${(list.length / (lastM + 1)).toLocaleString('fr-FR', {maximumFractionDigits: 1})} par mois en moyenne${y === cur ? ' depuis janvier' : ''} · meilleur mois : ${MOIS[best].toLowerCase()} (${tot(best)})`;
+  // genres
+  const gc = {}; list.forEach(i => { const g = i.genre || ''; gc[g] = (gc[g] || 0) + 1; });
+  const grows = Object.entries(gc).sort((a, b) => (a[0] === '') - (b[0] === '') || b[1] - a[1]);
+  const gmax = Math.max(...grows.map(r => r[1]));
   body.innerHTML = `<div style="display:flex;flex-direction:column;gap:16px">
     <div class="tiles">
       <div class="tile"><b>${list.length}</b><span>${list.length > 1 ? 'lectures' : 'lecture'}</span></div>
       <div class="tile"><b>${nl}</b><span><i class="sw" style="--c:${TYPES.livre.c}"></i>${nl > 1 ? 'livres' : 'livre'}</span></div>
       <div class="tile"><b>${nb}</b><span><i class="sw m-bd" style="--c:${TYPES.bd.c}"></i>BD</span></div>
     </div>
+    <div class="tiles">
+      <div class="tile"><b>${withPages.length ? compact(pagesTotal) : '—'}</b><span>pages lues</span></div>
+      <div class="tile"><b>${withPages.length ? fmtNum(avgPages) : '—'}</b><span>pages par livre</span></div>
+      <div class="tile">${longest ? `<b>${fmtNum(longest.pages)}</b><span class="tile-sub" title="${esc(titleOf(longest))}">plus long : ${esc(titleOf(longest))}</span>` : '<b>—</b><span>plus long</span>'}</div>
+    </div>
+    ${missing ? `<p class="chart-note">${missing} lecture${missing > 1 ? 's' : ''} sans nombre de pages. Complète-les dans la fiche, ou avec « Compléter mes fiches » dans ton compte.</p>` : ''}
     <div class="chart">
-      <div class="top"><h2>Par mois</h2><div class="legend" aria-hidden="true"><span><i class="sw" style="--c:${TYPES.livre.c}"></i>Livres</span><span><i class="sw m-bd" style="--c:${TYPES.bd.c}"></i>BD</span></div></div>
-      <div class="cols" role="img" aria-label="Lectures terminées par mois en ${y} : ${esc(label)}">
-        ${m.map((x, k) => `<button type="button" class="col" data-smonth="${k}" ${tot(k) ? '' : 'disabled'} aria-hidden="true" tabindex="-1"><span class="n">${tot(k) || ''}</span><span class="bar">${piece(x.bd.length, 'bd')}${piece(x.livre.length, 'livre')}</span></button>`).join('')}
+      <div class="top"><h2>Par mois</h2>
+        <div class="mini-seg" role="group" aria-label="Compter en"><button type="button" data-smode="count" aria-pressed="${mode === 'count'}">Lectures</button><button type="button" data-smode="pages" aria-pressed="${mode === 'pages'}">Pages</button></div></div>
+      <div class="legend" aria-hidden="true"><span><i class="sw" style="--c:${TYPES.livre.c}"></i>Livres</span><span><i class="sw m-bd" style="--c:${TYPES.bd.c}"></i>BD</span></div>
+      <div class="cols" role="img" aria-label="${mode === 'pages' ? 'Pages lues' : 'Lectures terminées'} par mois en ${y} : ${esc(label)}">
+        ${m.map((x, k) => `<button type="button" class="col" data-smonth="${k}" ${tot(k) ? '' : 'disabled'} aria-hidden="true" tabindex="-1"><span class="n">${tot(k) ? (mode === 'pages' ? compact(tot(k)) : tot(k)) : ''}</span><span class="bar">${piece(x.bd, 'bd')}${piece(x.livre, 'livre')}</span></button>`).join('')}
       </div>
       <div class="mos" aria-hidden="true">${MOIS.map((mm, k) => `<span class="${y === cur && k === lastM ? 'now' : ''}">${mm[0]}</span>`).join('')}</div>
-      <p class="chart-note">${avg} par mois en moyenne${y === cur ? ' depuis janvier' : ''} · meilleur mois : ${MOIS[best].toLowerCase()} (${tot(best)})</p>
+      <p class="chart-note">${note}</p>
+    </div>
+    <div class="chart">
+      <div class="top"><h2>Par genre</h2><span class="sub">${list.length - (gc[''] || 0)} classée${list.length - (gc[''] || 0) > 1 ? 's' : ''} sur ${list.length}</span></div>
+      <ul class="genres">${grows.map(([g, n]) => `<li class="${g ? '' : 'todo'}"><span class="gl">${g ? GENRES[g] : 'À classer'}</span><span class="gb"><i style="width:${(n / gmax * 100).toFixed(1)}%"></i></span><span class="gn">${n}</span></li>`).join('')}</ul>
+      ${gc[''] ? '<p class="chart-note">Choisis le genre dans la fiche du livre pour classer les autres.</p>' : ''}
     </div>
     <div class="months">
-      ${m.map((x, k) => ({x, k})).filter(o => tot(o.k)).reverse().map(({x, k}) => `<section class="mrow" id="sm-${k}" aria-labelledby="smh-${k}">
-        <div class="mhead"><h3 id="smh-${k}">${MOIS[k]}</h3><span>${[x.livre.length ? plur(x.livre.length, 'livre', 'livres') : '', x.bd.length ? `${x.bd.length} BD` : ''].filter(Boolean).join(' · ')}</span></div>
-        <ul class="mlist">${[...x.livre, ...x.bd].sort((a, b) => when(a) - when(b)).map(i => `<li><button type="button" class="mitem" data-open="${esc(i.id)}"><i class="sw${i.type === 'bd' ? ' m-bd' : ''}" style="--c:${TYPES[i.type].c}" aria-label="${TYPES[i.type].label}"></i><span class="t">${esc(titleOf(i))}${i.detail ? ', ' + esc(i.detail) : ''}</span><span class="w">${esc(i.creator || '')}</span></button></li>`).join('')}</ul>
+      ${m.map((x, k) => ({x, k})).filter(o => o.x.livre.length + o.x.bd.length).reverse().map(({x, k}) => `<section class="mrow" id="sm-${k}" aria-labelledby="smh-${k}">
+        <div class="mhead"><h3 id="smh-${k}">${MOIS[k]}</h3><span>${[x.livre.length ? plur(x.livre.length, 'livre', 'livres') : '', x.bd.length ? `${x.bd.length} BD` : '', [...x.livre, ...x.bd].some(i => i.pages) ? `${fmtNum([...x.livre, ...x.bd].reduce((t, i) => t + (i.pages || 0), 0))} p.` : ''].filter(Boolean).join(' · ')}</span></div>
+        <ul class="mlist">${[...x.livre, ...x.bd].sort((a, b) => when(a) - when(b)).map(i => `<li><button type="button" class="mitem" data-open="${esc(i.id)}"><i class="sw${i.type === 'bd' ? ' m-bd' : ''}" style="--c:${TYPES[i.type].c}" aria-label="${TYPES[i.type].label}"></i><span class="t">${esc(titleOf(i))}${i.detail ? ', ' + esc(i.detail) : ''}</span><span class="w">${esc(i.creator || '')}${i.pages ? ` · ${i.pages} p.` : ''}</span></button></li>`).join('')}</ul>
       </section>`).join('')}
     </div>
   </div>`;
@@ -533,6 +644,8 @@ function grParse(text){
     const tags = (get(r, 'Bookshelves') + ' ' + get(r, 'Binding')).toLowerCase();
     return { gid: get(r, 'Book Id').replace(/\D/g, ''), title: title.slice(0, 200), detail,
       creator: get(r, 'Author').slice(0, 200), readAt: grDate(get(r, 'Date Read')), addedAt: grDate(get(r, 'Date Added')),
+      pages: +get(r, 'Number of Pages') || null, pubYear: +(get(r, 'Original Publication Year') || get(r, 'Year Published')) || null,
+      publisher: get(r, 'Publisher').slice(0, 120) || null, genre: genreFrom(get(r, 'Bookshelves')), isbn: (get(r, 'ISBN13').replace(/\D/g, '').match(/^97[89]\d{10}$/) || [null])[0],
       get doneAt(){ return this.readAt || this.addedAt; }, get byAdded(){ return !this.readAt && !!this.addedAt; },
       type: /\b(bd|comics?|graphic|manga|bande)/.test(tags) ? 'bd' : 'livre' };
   });
@@ -551,16 +664,32 @@ function grRender(msg){
   if (!gr.year || !years[gr.year]) gr.year = ys.includes(String(new Date().getFullYear())) ? String(new Date().getFullYear()) : ys[0];
   const pick = gr.books.filter(b => b.doneAt && String(new Date(b.doneAt).getFullYear()) === gr.year);
   const fresh = pick.filter(b => !grKnown(b)), bd = fresh.filter(b => b.type === 'bd').length, added = fresh.filter(b => b.byAdded).length;
+  const fill = grFillable(pick);
   box.innerHTML = `<div class="top"><h2>Import Goodreads</h2><span class="sub">${gr.books.length} lus au total</span></div>
     <div class="field"><label for="grYear">Année de lecture</label>
       <select id="grYear">${ys.map(y => `<option value="${y}"${y === gr.year ? ' selected' : ''}>${y} · ${years[y]} livre${years[y] > 1 ? 's' : ''} lu${years[y] > 1 ? 's' : ''}</option>`).join('')}</select></div>
-    <p><strong>${fresh.length} à ajouter</strong> dans « Terminé »${bd ? ` (dont ${bd} rangés en BD d’après tes étagères Goodreads)` : ''}${pick.length - fresh.length ? `. ${pick.length - fresh.length} y sont déjà, je les saute` : ''}.${added ? ` ${added} n’ont pas de date de lecture : je prends leur date d’ajout dans Goodreads.` : ''}${undated ? ` ${undated} livres sans aucune date sont ignorés.` : ''}</p>
+    <p><strong>${fresh.length} à ajouter</strong> dans « Terminé »${bd ? ` (dont ${bd} rangés en BD d’après tes étagères Goodreads)` : ''}${pick.length - fresh.length ? `. ${pick.length - fresh.length} y sont déjà, je les saute` : ''}.${added ? ` ${added} n’ont pas de date de lecture : je prends leur date d’ajout dans Goodreads.` : ''}${undated ? ` ${undated} livres sans aucune date sont ignorés.` : ''}${fill.length ? ` ${fill.length} fiche${fill.length > 1 ? 's' : ''} déjà importée${fill.length > 1 ? 's' : ''} seront complétée${fill.length > 1 ? 's' : ''} (pages, année, éditeur).` : ''}</p>
     ${fresh.length ? `<ol>${fresh.slice(0, 5).map(b => `<li>${esc(b.title)} · ${esc(b.creator)}</li>`).join('')}${fresh.length > 5 ? `<li style="list-style:none;color:var(--muted)">et ${fresh.length - 5} autres</li>` : ''}</ol>` : ''}
-    <div class="acts">${fresh.length ? `<button type="button" class="btn sun" data-gr="go">Importer ${fresh.length} livre${fresh.length > 1 ? 's' : ''}</button>` : ''}<button type="button" class="link" data-gr="close">Annuler</button></div>`;
+    <div class="acts">${fresh.length || fill.length ? `<button type="button" class="btn sun" data-gr="go">${fresh.length ? `Importer ${fresh.length} livre${fresh.length > 1 ? 's' : ''}` : `Compléter ${fill.length} fiche${fill.length > 1 ? 's' : ''}`}</button>` : ''}<button type="button" class="link" data-gr="close">Annuler</button></div>`;
+}
+function grFillable(books){
+  return books.map(b => ({b, it: find('gr-' + b.gid)})).filter(({b, it}) => it &&
+    ((!it.pages && b.pages) || (!it.pubYear && b.pubYear) || (!it.publisher && b.publisher) || (!it.isbn && b.isbn) || (!it.genre && b.genre)));
 }
 async function grImport(){
   if (gr.busy || !store) return;
-  const pick = gr.books.filter(b => b.doneAt && String(new Date(b.doneAt).getFullYear()) === gr.year && !grKnown(b));
+  const inYear = gr.books.filter(b => b.doneAt && String(new Date(b.doneAt).getFullYear()) === gr.year);
+  const fill = grFillable(inYear);
+  for (const {b, it} of fill) {
+    const patch = {};
+    if (!it.pages && b.pages) patch.pages = b.pages;
+    if (!it.pubYear && b.pubYear) patch.pubYear = b.pubYear;
+    if (!it.publisher && b.publisher) patch.publisher = b.publisher;
+    if (!it.isbn && b.isbn) patch.isbn = b.isbn;
+    if (!it.genre && b.genre) patch.genre = b.genre;
+    save(it.id, patch);
+  }
+  const pick = inYear.filter(b => !grKnown(b));
   gr.busy = true; let done = 0;
   const now = Date.now();
   for (const b of pick) {
@@ -568,7 +697,8 @@ async function grImport(){
     const id = b.gid ? 'gr-' + b.gid : store.newId();
     try {
       await store.put(id, { type: b.type, status: 'termine', title: b.title, creator: b.creator, detail: b.detail,
-        note: 'Importé de Goodreads', photo: null, createdAt: b.addedAt || b.doneAt, updatedAt: now, doneAt: b.doneAt, source: 'goodreads' });
+        note: 'Importé de Goodreads', photo: null, createdAt: b.addedAt || b.doneAt, updatedAt: now, doneAt: b.doneAt, source: 'goodreads',
+        pages: b.pages, pubYear: b.pubYear, publisher: b.publisher, isbn: b.isbn, genre: b.genre });
       done++;
     } catch (e) {
       gr.busy = false;
@@ -579,7 +709,7 @@ async function grImport(){
   }
   gr.busy = false;
   state.shelf = 'termine'; renderShelf();
-  grRender(`<strong>${done} livre${done > 1 ? 's' : ''} ajouté${done > 1 ? 's' : ''}</strong> à l’étagère « Terminé » pour ${gr.year}.`);
+  grRender(`<strong>${done} livre${done > 1 ? 's' : ''} ajouté${done > 1 ? 's' : ''}</strong> à l’étagère « Terminé » pour ${gr.year}${fill.length ? `, ${fill.length} fiche${fill.length > 1 ? 's' : ''} complétée${fill.length > 1 ? 's' : ''}` : ''}.`);
 }
 $('grBtn').onclick = () => { if (!store) { toast('Encore un instant, ta pile se charge.'); return; } $('grFile').click(); };
 $('grFile').onchange = async e => {
@@ -601,6 +731,7 @@ document.addEventListener('click', e => {
   if (t.dataset.filter) { state.filter = t.dataset.filter; renderPile(); return; }
   if (t.dataset.shelf) { state.shelf = t.dataset.shelf; renderShelf(); return; }
   if (t.dataset.syear) { state.statYear = +t.dataset.syear; renderStats(); return; }
+  if (t.dataset.smode) { state.statMode = t.dataset.smode; renderStats(); return; }
   if (t.dataset.smonth) { const el = $('sm-' + t.dataset.smonth); if (el) el.scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start'}); return; }
   if (t.dataset.type && state.openId) { save(state.openId, {type: t.dataset.type}); refreshSheet(); renderPile(); return; }
   if (t.dataset.move && state.openId) { move(state.openId, t.dataset.move); return; }
@@ -609,7 +740,7 @@ document.addEventListener('click', e => {
   else if (act === 'library') { state.camTarget = null; $('lib').click(); }
   else if (act === 'zoom' && state.openId) { const it = find(state.openId); const src = it && (it.photo || state.previews[it.id]); if (src) openPhoto(src, t); }
   else if (act === 'close') closeSheet();
-  else if (act === 'cover' && state.openId) { flushSave(); delete state.idNote[state.openId]; autoCover(state.openId, true); }
+  else if (act === 'cover' && state.openId) { flushSave(); delete state.idNote[state.openId]; autoEnrich(state.openId, true); }
   else if (act === 'uncover' && state.openId) { delete state.idNote[state.openId]; save(state.openId, {photo: null, coverFrom: 'none'}); renderAll(); toast('Couverture retirée. Tu peux ajouter une photo ou relancer la recherche.'); }
   else if (act === 'del') { state.delArmed = true; refreshSheet(); }
   else if (act === 'del-no') { state.delArmed = false; refreshSheet(); }
@@ -631,7 +762,7 @@ document.addEventListener('pointerdown', e => { if (!$('addMenu').hidden && !e.t
 $('cam').onchange = $('lib').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) onPhoto(f); };
 $('q').oninput = e => { state.q = e.target.value; renderPile(); };
 $('sheetWrap').addEventListener('click', e => { if (e.target === $('sheetWrap')) closeSheet(); });
-$('sheet').addEventListener('input', e => { if (['fTitle','fCreator','fDetail','fNote'].includes(e.target.id)) { scheduleSave(); $('sheetTitle').textContent = $('fTitle').value.trim() || 'Nouvelle envie'; $('sCreator').textContent = $('fCreator').value; } });
+$('sheet').addEventListener('input', e => { if (['fTitle','fCreator','fDetail','fNote','fPages','fGenre'].includes(e.target.id)) { scheduleSave(); $('sheetTitle').textContent = $('fTitle').value.trim() || 'Nouvelle envie'; $('sCreator').textContent = $('fCreator').value; } });
 $('sheet').addEventListener('click', e => { if (e.target.closest('#sClose')) closeSheet(); if (e.target.closest('#sPhoto')) { flushSave(); state.camTarget = state.openId; $('lib').click(); } });
 let lbReturn = null;
 function openPhoto(src, from){ lbReturn = from || null; $('lbImg').src = src; $('lightbox').hidden = false; $('lbClose').focus({preventScroll: true}); }
@@ -859,9 +990,9 @@ function openAccount(){
       <div class="acts"><button type="button" class="btn" data-acc="export">Exporter mes fiches</button><button type="button" class="btn" data-acc="import">Importer une sauvegarde</button></div>
     </div>
     <div class="panel">
-      <h2>Couvertures</h2>
-      <p class="sub">Cherche en ligne une couverture pour chaque livre ou BD sans image.</p>
-      <div class="acts"><button type="button" class="btn" data-acc="covers">Chercher les couvertures manquantes</button></div>
+      <h2>Infos des livres</h2>
+      <p class="sub">Cherche en ligne la couverture, le nombre de pages, l’année et le genre des livres et BD où ils manquent.</p>
+      <div class="acts"><button type="button" class="btn" data-acc="covers">Compléter mes fiches</button></div>
     </div>
     <p id="accMsg" aria-live="polite"></p>
     <button type="button" class="link" data-acc="logout" style="align-self:flex-start">Se déconnecter</button>`;
@@ -909,7 +1040,7 @@ $('sheet').addEventListener('click', e => {
   const b = e.target.closest('[data-acc]'); if (!b) return;
   if (b.dataset.acc === 'export') exportBackup();
   else if (b.dataset.acc === 'import') { if (!importing) $('backupFile').click(); }
-  else if (b.dataset.acc === 'covers') fillCovers();
+  else if (b.dataset.acc === 'covers') fillDetails();
   else if (b.dataset.acc === 'logout') { try { localStorage.removeItem(CACHE_KEY); } catch (err) {} sb.auth.signOut().finally(() => location.reload()); }
 });
 $('backupFile').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) importBackup(f); };
