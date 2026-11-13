@@ -1,6 +1,6 @@
 # Ma Pile
 
-PWA perso pour noter ce que je veux acheter (livres, BD, jeux, Lego, objets), gérer une liste cadeaux, ranger ce qui est terminé sur des étagères et suivre mes lectures par mois.
+PWA perso pour gérer ma collection (Lego, jeux, livres, BD, objets), noter mes envies, partager une liste cadeaux et suivre mes lectures.
 
 - Front : HTML, CSS et JavaScript sans framework, hébergé sur GitHub Pages.
 - Données : Supabase (base Postgres, stockage des photos, connexion par e-mail et mot de passe).

@@ -118,9 +118,9 @@ h2{font-family:var(--display);font-size:20px;font-weight:800;margin:0}
 .tab::after{content:"";width:18px;height:4px;border-radius:2px}
 .tab[aria-current="page"]{color:var(--ink);font-weight:700}
 .tab[aria-current="page"]::after{background:var(--accent)}
-.tab[data-go="cadeaux"][aria-current="page"]::after{background:var(--sun)}
-.tab[data-go="etageres"][aria-current="page"]::after{background:var(--c-livre)}
-.tab[data-go="stats"][aria-current="page"]::after{background:var(--c-lego)}
+.tab[data-go="collection"][aria-current="page"]::after{background:var(--c-lego)}
+.tab[data-go="lectures"][aria-current="page"]::after{background:var(--c-livre)}
+.tab[data-go="stats"][aria-current="page"]::after{background:var(--sun)}
 .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .tile{display:flex;flex-direction:column;gap:4px;padding:12px;border:2px solid var(--line);border-radius:14px;background:var(--surface);min-width:0}
 .tile b{font-family:var(--display);font-size:30px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
@@ -267,3 +267,24 @@ img{max-width:100%}
 .genres .gn{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
 .genres li.todo .gl,.genres li.todo .gn{color:var(--muted)}
 .genres li.todo .gb i{background:var(--dash)}
+
+/* Collection axis */
+.card .badge{align-self:flex-start;max-width:100%;padding:3px 9px;border:2px solid var(--line);border-radius:999px;background:var(--surface);font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .badge.hot{background:var(--sun);color:var(--on-sun)}
+.own{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;border:2px solid var(--line);border-radius:16px;background:var(--surface)}
+.own button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:50px;border:none;border-radius:12px;background:none;font-size:16px;font-weight:600;cursor:pointer}
+.own #ownNo[aria-pressed="true"]{background:var(--accent);color:var(--on-accent);font-weight:700}
+.own #ownYes[aria-pressed="true"]{background:var(--c-lego);color:var(--cover-light);font-weight:700}
+.extra{display:flex;flex-direction:column;gap:10px}
+.extra .sub{margin:0}
+.plays{display:flex;align-items:center;gap:14px}
+.plays .iconbtn{font-size:22px;font-weight:700;line-height:1}
+.plays .iconbtn:disabled{opacity:.4;cursor:default}
+.plays output{min-width:2.5ch;text-align:center;font-family:var(--display);font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+.big.own-big{background:var(--c-lego);color:var(--cover-light)}
+.big.soft{background:var(--surface);color:var(--ink);box-shadow:none;min-height:54px}
+.addto{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;margin-bottom:4px;border:2px solid var(--line);border-radius:12px;background:var(--bg)}
+.addmenu .addto button{min-height:42px;padding:0 8px;justify-content:center;gap:6px;border:none;border-radius:8px;font-size:13px;font-weight:600}
+.addmenu .addto button+button{border-top:none;border-radius:8px}
+.addmenu .addto button[aria-checked="true"]{background:var(--ink);color:var(--bg);font-weight:700}
+.addmenu .addto + button{border-top:none}

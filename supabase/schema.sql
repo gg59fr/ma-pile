@@ -8,7 +8,7 @@ create table if not exists public.items (
   type        text not null default 'livre'
               check (type in ('livre', 'bd', 'jeu', 'lego', 'objet')),
   status      text not null default 'pile'
-              check (status in ('pile', 'cadeau', 'termine', 'telecharge', 'achete', 'abandonne')),
+              check (status in ('pile', 'cadeau', 'collection', 'parti', 'termine', 'telecharge', 'achete', 'abandonne')),
   title       text not null default '',
   creator     text not null default '',
   detail      text not null default '',
@@ -22,12 +22,19 @@ create table if not exists public.items (
   publisher   text,
   genre       text check (genre is null or genre in ('polar', 'sf', 'fantasy', 'horreur', 'roman', 'essai', 'jeunesse', 'autre')),
   meta_checked bigint,
+  owned       boolean not null default false,
+  owned_at    bigint,
+  format      text check (format is null or format in ('papier', 'numerique')),
+  cond        text check (cond is null or cond in ('boite', 'construit', 'demonte')),
+  plays       integer not null default 0 check (plays between 0 and 100000),
+  extra       jsonb not null default '{}'::jsonb,
   created_at  bigint not null default (extract(epoch from now()) * 1000)::bigint,
   updated_at  bigint not null default (extract(epoch from now()) * 1000)::bigint,
   done_at     bigint
 );
 create index if not exists items_user_idx on public.items (user_id);
 create index if not exists items_user_status_idx on public.items (user_id, status);
+create index if not exists items_user_owned_idx on public.items (user_id) where owned;
 create index if not exists items_user_isbn_idx on public.items (user_id, isbn) where isbn is not null;
 
 -- Only the owner reads and writes their own records.

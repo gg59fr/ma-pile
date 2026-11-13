@@ -22,7 +22,7 @@
 <body class="locked">
 <section id="auth" class="auth" aria-labelledby="h-auth" hidden>
   <div class="brand"><span class="brick" aria-hidden="true"></span><h1 id="h-auth">Ma Pile</h1></div>
-  <p class="sub">Tes envies de livres, BD, jeux, Lego et objets, ta liste cadeaux et tes étagères.</p>
+  <p class="sub">Ta collection de livres, BD, jeux, Lego et objets, tes envies, ta liste cadeaux et tes lectures.</p>
   <form id="authForm" class="panel" novalidate>
     <div class="field"><label for="aEmail">E-mail</label><input id="aEmail" type="email" autocomplete="username" inputmode="email" autocapitalize="off" required></div>
     <div class="field"><label for="aPass">Mot de passe</label><input id="aPass" type="password" autocomplete="current-password" minlength="6" required></div>
@@ -33,26 +33,40 @@
 <div class="app">
   <p class="banner" id="banner" hidden></p>
 
-  <section data-view="pile" id="v-pile" aria-labelledby="h-pile">
+  <section data-view="collection" id="v-collection" aria-labelledby="h-collection">
     <header class="head">
-      <div class="brand"><span class="brick" aria-hidden="true"></span><h1 id="h-pile">Ma pile</h1><button type="button" class="iconbtn acct" id="acctBtn" aria-label="Mon compte"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></button></div>
-      <p class="sub" id="pileSub">Chargement…</p>
+      <div class="brand"><span class="brick green" aria-hidden="true"></span><h1 id="h-collection">Ma collection</h1><button type="button" class="iconbtn acct" id="acctBtn" aria-label="Mon compte"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></button></div>
+      <p class="sub" id="colSub">Chargement…</p>
     </header>
-    <label for="q" class="sr">Rechercher dans ma pile</label>
+    <label for="cq" class="sr">Rechercher dans ma collection</label>
     <div class="search">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="q" type="search" placeholder="Titre, auteur, marque…" autocomplete="off">
+      <input id="cq" type="search" placeholder="Titre, n° de set, auteur…" autocomplete="off">
     </div>
-    <div class="chips" id="chips" role="group" aria-label="Filtrer par type"></div>
-    <div class="rowhead"><h2>À acheter</h2></div>
-    <div class="grid" id="pileGrid"></div>
+    <div class="chips" id="colChips" role="group" aria-label="Filtrer par type"></div>
+    <div class="grid" id="colGrid"></div>
   </section>
 
-  <section data-view="cadeaux" id="v-cadeaux" aria-labelledby="h-cadeaux" hidden>
+  <section data-view="envies" id="v-envies" aria-labelledby="h-envies" hidden>
     <header class="head">
-      <div class="brand"><span class="brick sun" aria-hidden="true"></span><h1 id="h-cadeaux">Liste cadeaux</h1></div>
-      <p class="sub">Les envies que tu aimerais qu’on t’offre. Envoie le lien : tes proches ouvrent la liste sans compte et réservent un cadeau pour éviter les doublons.</p>
+      <div class="brand"><span class="brick" aria-hidden="true"></span><h1 id="h-envies">Mes envies</h1></div>
+      <p class="sub" id="pileSub">Chargement…</p>
     </header>
+    <div class="seg" role="tablist" aria-label="Envies" id="envSeg">
+      <button type="button" role="tab" data-env="buy" aria-selected="true" id="envTabBuy">À acheter</button>
+      <button type="button" role="tab" data-env="gifts" aria-selected="false" id="envTabGifts">Liste cadeaux</button>
+    </div>
+    <div id="envBuy" style="display:flex;flex-direction:column;gap:16px">
+      <label for="q" class="sr">Rechercher dans mes envies</label>
+      <div class="search">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="Titre, auteur, marque…" autocomplete="off">
+      </div>
+      <div class="chips" id="chips" role="group" aria-label="Filtrer par type"></div>
+      <div class="grid" id="pileGrid"></div>
+    </div>
+    <div id="envGifts" style="display:flex;flex-direction:column;gap:16px" hidden>
+    <p class="sub">Les envies que tu aimerais qu’on t’offre. Envoie le lien : tes proches ouvrent la liste sans compte et réservent un cadeau pour éviter les doublons.</p>
     <div class="panel">
       <div class="top"><h2>Ma liste</h2><span class="sub" id="giftCount"></span></div>
       <button type="button" class="btn accent" id="shareGifts">
@@ -66,12 +80,13 @@
       <textarea id="giftText" readonly hidden></textarea>
     </div>
     <ul class="rows" id="giftList"></ul>
+    </div>
   </section>
 
-  <section data-view="etageres" id="v-etageres" aria-labelledby="h-etageres" hidden>
+  <section data-view="lectures" id="v-lectures" aria-labelledby="h-lectures" hidden>
     <header class="head">
-      <div class="brand"><span class="brick blue" aria-hidden="true"></span><h1 id="h-etageres">Étagères</h1></div>
-      <p class="sub">Tout ce qui est sorti de ta pile.</p>
+      <div class="brand"><span class="brick blue" aria-hidden="true"></span><h1 id="h-lectures">Lectures</h1></div>
+      <p class="sub">Livres et BD terminés, téléchargés ou abandonnés, que tu les aies ou non.</p>
     </header>
     <div class="seg" role="tablist" aria-label="Statut" id="shelfTabs"></div>
     <div class="shelf" id="shelf" role="tabpanel"></div>
@@ -86,7 +101,7 @@
 
   <section data-view="stats" id="v-stats" aria-labelledby="h-stats" hidden>
     <header class="head">
-      <div class="brand"><span class="brick green" aria-hidden="true"></span><h1 id="h-stats">Stats</h1></div>
+      <div class="brand"><span class="brick sun" aria-hidden="true"></span><h1 id="h-stats">Stats</h1></div>
       <p class="sub">Livres et BD terminés, mois par mois.</p>
     </header>
     <div class="chips" id="statYears" role="group" aria-label="Année"></div>
@@ -94,10 +109,14 @@
   </section>
 </div>
 
-<button type="button" class="fab" id="fab" aria-label="Ajouter une envie" aria-haspopup="menu" aria-expanded="false">
+<button type="button" class="fab" id="fab" aria-label="Ajouter" aria-haspopup="menu" aria-expanded="false">
   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 </button>
-<div class="addmenu" id="addMenu" role="menu" aria-label="Ajouter une envie" hidden>
+<div class="addmenu" id="addMenu" role="menu" aria-label="Ajouter" hidden>
+  <div class="addto" role="radiogroup" aria-label="Où ajouter">
+    <button type="button" role="radio" data-to="collection" aria-checked="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>Dans ma collection</button>
+    <button type="button" role="radio" data-to="envie" aria-checked="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>Une envie</button>
+  </div>
   <button type="button" role="menuitem" data-add="scan"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13 8v8M17 8v8"/></svg>Scanner un code-barres</button>
   <button type="button" role="menuitem" data-add="cam"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Prendre une photo</button>
   <button type="button" role="menuitem" data-add="lib"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>Photothèque</button>
@@ -107,12 +126,12 @@
 <input type="file" id="lib" accept="image/*" hidden>
 
 <nav class="tabs" aria-label="Sections"><div class="in">
-  <button type="button" class="tab" data-go="pile">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="15" width="16" height="5"/><rect x="6" y="10" width="13" height="5"/><rect x="5" y="5" width="11" height="5"/></svg>Ma pile</button>
-  <button type="button" class="tab" data-go="cadeaux">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="4"/><path d="M5 12v8h14v-8M12 8v12M12 8c-1-3-5-4-5-1.5S10 8 12 8zm0 0c1-3 5-4 5-1.5S14 8 12 8z"/></svg>Cadeaux</button>
-  <button type="button" class="tab" data-go="etageres">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18M6 20V6h3v14M10 20V4h3v16M15 20l-1-11 3-.5 2 11.5"/></svg>Étagères</button>
+  <button type="button" class="tab" data-go="collection">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="9" rx="1.5"/><rect x="6" y="7" width="4" height="4" rx="1"/><rect x="14" y="7" width="4" height="4" rx="1"/></svg>Collection</button>
+  <button type="button" class="tab" data-go="envies">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>Envies</button>
+  <button type="button" class="tab" data-go="lectures">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18M6 20V6h3v14M10 20V4h3v16M15 20l-1-11 3-.5 2 11.5"/></svg>Lectures</button>
   <button type="button" class="tab" data-go="stats">
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16M7 16v-5M12 16V6M17 16v-8"/></svg>Stats</button>
 </div></nav>

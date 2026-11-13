@@ -11,31 +11,33 @@ const TYPES = {
   lego:{label:'Lego',plural:'Lego',c:'var(--c-lego)',t:'var(--cover-light)',shape:'box'},
   objet:{label:'Objet',plural:'Objets',c:'var(--c-objet)',t:'var(--cover-light)',shape:'box'}
 };
-const STATUS = {pile:'Ma pile',cadeau:'Liste cadeaux',termine:'Terminé',telecharge:'Téléchargé',achete:'Acheté',abandonne:'Abandonné'};
-const SHELVES = ['termine','telecharge','achete','abandonne'];
+const STATUS = {pile:'À acheter',cadeau:'Liste cadeaux',collection:'Ma collection',parti:'Plus à moi',termine:'Terminé',telecharge:'Téléchargé',achete:'Acheté',abandonne:'Abandonné'};
+const SHELVES = ['termine','telecharge','abandonne'];
+const COND = {boite:'En boîte', construit:'Construit', demonte:'Démonté'};
+const FORMAT = {papier:'Papier', numerique:'Numérique'};
+const DETAIL_LABEL = {livre:['Tome, série','Tome 2, Folio…'], bd:['Tome, série','Tome 1…'], lego:['N° de set','21335'], jeu:['Édition, extension','2e édition…'], objet:['Modèle','Taille, couleur…']};
 const ICON = {
   cadeau:'<rect x="3" y="8" width="18" height="4"/><path d="M5 12v8h14v-8M12 8v12M12 8c-1-3-5-4-5-1.5S10 8 12 8zm0 0c1-3 5-4 5-1.5S14 8 12 8z"/>',
   termine:'<path d="m5 12 5 5 9-10"/>',
   telecharge:'<path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/>',
   achete:'<path d="M5 8h14l-1 12H6zM9 8V6a3 3 0 0 1 6 0v2"/>',
   abandonne:'<path d="M6 6l12 12M18 6 6 18"/>',
-  pile:'<rect x="4" y="15" width="16" height="5"/><rect x="6" y="10" width="13" height="5"/><rect x="5" y="5" width="11" height="5"/>'
+  pile:'<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+  collection:'<rect x="3" y="11" width="18" height="9" rx="1.5"/><rect x="6" y="7" width="4" height="4" rx="1"/><rect x="14" y="7" width="4" height="4" rx="1"/>',
+  parti:'<path d="M14 5h5v5M19 5l-8 8M10 5H5v14h14v-5"/>'
 };
-const ICOLOR = {termine:'var(--ok)',telecharge:'var(--c-livre)',achete:'var(--c-objet)',abandonne:'var(--accent)',cadeau:'currentColor',pile:'currentColor'};
+const ICOLOR = {termine:'var(--ok)',telecharge:'var(--c-livre)',achete:'var(--c-objet)',abandonne:'var(--accent)',cadeau:'currentColor',pile:'var(--accent)',collection:'var(--c-lego)',parti:'currentColor'};
 const svg = (k,size=24,color='currentColor') => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const hash = s => { let h = 7; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; };
-const titleOf = it => (it.title || '').trim() || 'Nouvelle envie';
+const titleOf = it => (it.title || '').trim() || (it.owned ? 'Nouvelle fiche' : 'Nouvelle envie');
 const ago = ms => { if (!ms) return ''; const d = Math.floor((Date.now() - ms) / 864e5);
   if (d < 1) return 'Ajouté aujourd’hui'; if (d < 7) return `Ajouté il y a ${d} j`;
   if (d < 60) return `Ajouté il y a ${Math.floor(d / 7)} sem.`; return `Ajouté il y a ${Math.floor(d / 30)} mois`; };
-const allowedMoves = it => {
-  const base = it.type === 'objet' ? ['cadeau','achete','abandonne'] : ['cadeau','termine','telecharge','abandonne'];
-  const out = base.filter(s => s !== it.status); if (it.status !== 'pile') out.push('pile'); return out; };
 
-const state = { items: [], ready: false, view: 'pile', filter: 'all', q: '', shelf: 'termine',
+const state = { items: [], ready: false, view: 'collection', filter: 'all', q: '', shelf: 'termine', colFilter: 'all', cq: '', envTab: 'buy', addTo: 'collection',
   openId: null, identifying: new Set(), idNote: {}, previews: {}, coverBusy: new Set(), coverTried: {}, camTarget: null, delArmed: false, accountOpen: false };
 let store = null, sb = null, user = null;
 const pendingNew = new Map();
@@ -52,12 +54,15 @@ const toRow = (id, d, uid) => ({
   title: d.title || '', creator: d.creator || '', detail: d.detail || '', note: d.note || '',
   photo: d.photo || null, source: d.source || null, cover_from: d.coverFrom || null, isbn: d.isbn || null,
   pages: d.pages || null, pub_year: d.pubYear || null, publisher: d.publisher || null, genre: d.genre || null, meta_checked: d.metaChecked || null,
+  owned: !!d.owned, owned_at: d.ownedAt ? Math.round(d.ownedAt) : null, format: d.format || null, cond: d.cond || null,
+  plays: Math.max(0, d.plays | 0), extra: d.extra && typeof d.extra === 'object' ? d.extra : {},
   created_at: Math.round(d.createdAt || Date.now()), updated_at: Math.round(d.updatedAt || Date.now()),
   done_at: d.doneAt ? Math.round(d.doneAt) : null });
 const fromRow = r => ({
   id: r.id, type: r.type, status: r.status, title: r.title, creator: r.creator, detail: r.detail, note: r.note,
   photo: r.photo, source: r.source, coverFrom: r.cover_from, isbn: r.isbn || null,
   pages: r.pages || null, pubYear: r.pub_year || null, publisher: r.publisher || null, genre: r.genre || null, metaChecked: r.meta_checked ? Number(r.meta_checked) : null,
+  owned: !!r.owned, ownedAt: r.owned_at ? Number(r.owned_at) : null, format: r.format || null, cond: r.cond || null, plays: r.plays | 0, extra: r.extra || {},
   createdAt: Number(r.created_at), updatedAt: Number(r.updated_at), doneAt: r.done_at == null ? null : Number(r.done_at) });
 const photoPath = url => { const m = String(url || '').match(/\/storage\/v1\/object\/public\/photos\/(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
 
@@ -130,8 +135,10 @@ function coverHTML(it, small){
 }
 
 /* ---------- views ---------- */
+const VIEW_ALIAS = { pile: ['envies', 'buy'], cadeaux: ['envies', 'gifts'], etageres: ['lectures'] };
 function setView(v){
-  if (!['pile','cadeaux','etageres','stats'].includes(v)) v = 'pile';
+  if (VIEW_ALIAS[v]) { const [to, tab] = VIEW_ALIAS[v]; if (tab) setEnvTab(tab, true); v = to; }
+  if (!['collection','envies','lectures','stats'].includes(v)) v = 'collection';
   state.view = v;
   document.querySelectorAll('section[data-view]').forEach(s => s.hidden = s.dataset.view !== v);
   document.querySelectorAll('.tab').forEach(t => { if (t.dataset.go === v) t.setAttribute('aria-current','page'); else t.removeAttribute('aria-current'); });
@@ -139,11 +146,62 @@ function setView(v){
   window.scrollTo(0, 0);
 }
 
+function setEnvTab(tab, quiet){
+  state.envTab = tab === 'gifts' ? 'gifts' : 'buy';
+  $('envBuy').hidden = state.envTab !== 'buy'; $('envGifts').hidden = state.envTab !== 'gifts';
+  $('envTabBuy').setAttribute('aria-selected', String(state.envTab === 'buy'));
+  $('envTabGifts').setAttribute('aria-selected', String(state.envTab === 'gifts'));
+}
+
+/* Collection: everything owned. Badge = where it stands (built, games played, read…). */
+const fmtN = n => Math.round(n).toLocaleString('fr-FR');
+function badgeOf(it){
+  if (it.status === 'parti') return 'Plus à moi';
+  const bits = [];
+  if (it.type === 'lego') { if (it.cond) bits.push(COND[it.cond]); if (it.extra && it.extra.pieces) bits.push(`${fmtN(it.extra.pieces)} pièces`); }
+  else if (it.type === 'jeu') bits.push(it.plays ? `${it.plays} partie${it.plays > 1 ? 's' : ''}` : 'Jamais joué');
+  else if (isBook(it)) {
+    bits.push(it.status === 'termine' ? 'Lu' : it.status === 'abandonne' ? 'Abandonné' : 'À lire');
+    if (it.format === 'numerique') bits.push('Numérique'); else if (it.pages) bits.push(`${it.pages} p.`);
+  }
+  return bits.join(' · ');
+}
+function renderCollection(){
+  const owned = state.items.filter(i => i.owned), gone = state.items.filter(i => !i.owned && i.status === 'parti');
+  const n = k => owned.filter(i => i.type === k).length;
+  const pieces = owned.filter(i => i.type === 'lego').reduce((t, i) => t + ((i.extra && i.extra.pieces) || 0), 0);
+  const parts = [n('lego') && `${n('lego')} Lego${pieces ? ` · ${fmtN(pieces)} pièces` : ''}`, n('jeu') && `${n('jeu')} jeu${n('jeu') > 1 ? 'x' : ''}`,
+    (n('livre') + n('bd')) && `${n('livre') + n('bd')} livre${n('livre') + n('bd') > 1 ? 's' : ''} et BD`, n('objet') && `${n('objet')} objet${n('objet') > 1 ? 's' : ''}`].filter(Boolean);
+  $('colSub').textContent = !state.ready ? 'Chargement…' : parts.length ? parts.join(' · ') : 'Rien pour l’instant';
+  if (state.colFilter === 'parti' && !gone.length) state.colFilter = 'all';
+  const chips = [['all', 'Tout', owned.length], ...['lego', 'jeu', 'livre', 'bd', 'objet'].map(k => [k, TYPES[k].plural, n(k)])];
+  if (gone.length) chips.push(['parti', 'Plus à moi', gone.length]);
+  $('colChips').innerHTML = chips.map(([k, l, c]) => `<button type="button" class="chip" data-cfilter="${k}" aria-pressed="${state.colFilter === k}">${l} ${c}</button>`).join('');
+  const q = state.cq.trim().toLowerCase();
+  const base = state.colFilter === 'parti' ? gone : owned.filter(i => state.colFilter === 'all' || i.type === state.colFilter);
+  const list = base.filter(i => !q || [i.title, i.creator, i.detail, i.note].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => (b.ownedAt || b.createdAt || 0) - (a.ownedAt || a.createdAt || 0));
+  const grid = $('colGrid');
+  if (!state.ready) { grid.innerHTML = ''; return; }
+  if (!list.length) {
+    grid.innerHTML = owned.length
+      ? `<div class="empty" style="grid-column:1/-1"><strong>Rien ne correspond</strong>Essaie un autre filtre ou un autre mot.</div>`
+      : `<div class="empty" style="grid-column:1/-1"><strong>Ta collection est vide</strong>Ajoute tes Lego, tes jeux, tes livres ou tes objets avec le bouton +. Une envie achetée ou reçue arrive aussi ici avec « Je l’ai ».<button type="button" class="btn sun" data-act="photo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Ajouter à ma collection</button></div>`;
+    return;
+  }
+  grid.innerHTML = list.map(it => { const b = badgeOf(it); return `<button type="button" class="card" data-open="${esc(it.id)}">
+      ${coverHTML(it)}
+      <span class="meta"><span class="t">${esc(titleOf(it))}</span>
+      <span class="w">${state.identifying.has(it.id) ? '<span class="busy"><span class="spin"></span>Envoi de la photo…</span>' : state.coverBusy.has(it.id) ? '<span class="busy"><span class="spin"></span>Recherche en ligne…</span>' : esc(it.creator || (it.type === 'lego' && it.detail ? 'Set ' + it.detail : ''))}</span></span>
+      ${b ? `<span class="badge${it.type === 'lego' && it.cond === 'boite' ? ' hot' : ''}">${esc(b)}</span>` : ''}
+    </button>`; }).join('');
+}
+
 function renderPile(){
-  const pile = state.items.filter(i => i.status === 'pile');
-  const gifts = state.items.filter(i => i.status === 'cadeau').length;
+  const pile = state.items.filter(i => i.status === 'pile' && !i.owned);
+  const gifts = state.items.filter(i => i.status === 'cadeau' && !i.owned).length;
   $('pileSub').textContent = !state.ready ? 'Chargement…' :
-    `${pile.length} envie${pile.length > 1 ? 's' : ''} en attente · ${gifts} dans la liste cadeaux`;
+    `${pile.length} à acheter · ${gifts} dans la liste cadeaux`;
   const counts = {all: pile.length}; for (const k in TYPES) counts[k] = pile.filter(i => i.type === k).length;
   $('chips').innerHTML = [['all','Tout'], ...Object.keys(TYPES).map(k => [k, TYPES[k].plural])]
     .map(([k, l]) => `<button type="button" class="chip" data-filter="${k}" aria-pressed="${state.filter === k}">${l} ${counts[k]}</button>`).join('');
@@ -156,7 +214,7 @@ function renderPile(){
   if (!list.length) {
     grid.innerHTML = pile.length
       ? `<div class="empty" style="grid-column:1/-1"><strong>Rien ne correspond</strong>Essaie un autre filtre ou un autre mot.</div>`
-      : `<div class="empty" style="grid-column:1/-1"><strong>Ta pile est vide</strong>Prends en photo une couverture, une boîte de jeu ou un objet, ou note une idée sans photo : la fiche arrive ici.<button type="button" class="btn sun" data-act="photo">${'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>'}Ajouter une envie</button></div>`;
+      : `<div class="empty" style="grid-column:1/-1"><strong>Aucune envie pour l’instant</strong>Prends en photo une couverture, une boîte de jeu ou un objet, ou note une idée sans photo : la fiche arrive ici.<button type="button" class="btn sun" data-act="photo">${'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>'}Ajouter une envie</button></div>`;
     return;
   }
   grid.innerHTML = list.map(it => `<button type="button" class="card" data-open="${esc(it.id)}">
@@ -167,7 +225,7 @@ function renderPile(){
 }
 
 function giftLines(){
-  return state.items.filter(i => i.status === 'cadeau').sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  return state.items.filter(i => i.status === 'cadeau' && !i.owned).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 }
 function renderGifts(){
   const g = giftLines();
@@ -177,7 +235,7 @@ function renderGifts(){
       <span class="mini m-${esc(it.type)}" style="--c:${TYPES[it.type]?.c || TYPES.livre.c}">${it.photo ? `<img src="${esc(it.photo)}" alt="">` : ''}</span>
       <span class="meta"><span class="t">${esc(titleOf(it))}${it.detail ? ', ' + esc(it.detail) : ''}</span>
       <span class="w">${TYPES[it.type]?.label || ''}${it.creator ? ' · ' + esc(it.creator) : ''}</span></span></button></li>`).join('')
-    : `<li class="empty"><strong>Liste vide</strong>Depuis une fiche de ta pile, choisis « Mettre dans ma liste cadeaux ».</li>`;
+    : `<li class="empty"><strong>Liste vide</strong>Depuis la fiche d’une envie, choisis « Mettre dans ma liste cadeaux ».</li>`;
 }
 function giftText(){
   return 'Ma liste cadeaux\n' + giftLines().map(it => `• ${titleOf(it)}${it.detail ? ', ' + it.detail : ''} (${TYPES[it.type]?.label || ''}${it.creator ? ', ' + it.creator : ''})`).join('\n');
@@ -215,11 +273,16 @@ function openSheet(id){
     <div class="hero"><span id="sCover"></span>
       <div class="hero-txt"><h2 id="sheetTitle"></h2><p id="sCreator"></p>
       <button type="button" class="link" id="sPhoto" style="align-self:flex-start;padding:6px 0">${it.photo ? 'Changer la photo' : 'Ajouter une photo'}</button></div></div>
+    <div class="own" role="group" aria-label="Est-ce que je l’ai ?">
+      <button type="button" data-own="0" id="ownNo"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>Envie</button>
+      <button type="button" data-own="1" id="ownYes"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>Je l’ai</button>
+    </div>
     <p class="idline" id="sId" aria-live="polite"></p>
+    <div id="sExtra" class="extra"></div>
     <div class="field"><label for="fTitle">Titre</label><input id="fTitle" autocomplete="off" value="${esc(it.title)}" placeholder="Titre"></div>
     <div class="two">
       <div class="field"><label for="fCreator">Auteur, éditeur ou marque</label><input id="fCreator" autocomplete="off" value="${esc(it.creator)}"></div>
-      <div class="field"><label for="fDetail">Détail</label><input id="fDetail" autocomplete="off" value="${esc(it.detail)}" placeholder="Tome, n° de set…"></div>
+      <div class="field"><label for="fDetail" id="lDetail">Détail</label><input id="fDetail" autocomplete="off" value="${esc(it.detail)}"></div>
     </div>
     <div class="two" id="fBookRow">
       <div class="field"><label for="fPages">Pages</label><input id="fPages" type="number" inputmode="numeric" min="1" max="20000" value="${it.pages || ''}" placeholder="—"></div>
@@ -254,7 +317,18 @@ function refreshSheet(){
   const cov = coverHTML({...it, title: titleIn ? titleIn.value : it.title}, false);
   const shown = it.photo || state.previews[it.id];
   $('sCover').innerHTML = shown ? `<button type="button" class="zoom" data-act="zoom" aria-label="Voir la photo en grand">${cov}</button>` : cov;
-  $('sPill').innerHTML = `${svg(it.status, 16, ICOLOR[it.status])} ${STATUS[it.status] || ''}`;
+  const pillKey = it.owned ? (isBook(it) && SHELVES.includes(it.status) ? it.status : 'collection') : it.status;
+  $('sPill').innerHTML = `${svg(pillKey, 16, ICOLOR[pillKey])} ${it.owned && pillKey !== 'collection' ? `${STATUS[pillKey]} · dans ma collection` : STATUS[pillKey] || ''}`;
+  $('ownNo').setAttribute('aria-pressed', String(!it.owned)); $('ownYes').setAttribute('aria-pressed', String(!!it.owned));
+  const [dl, dph] = DETAIL_LABEL[it.type] || DETAIL_LABEL.objet;
+  $('lDetail').textContent = dl; $('fDetail').placeholder = dph; $('fDetail').inputMode = it.type === 'lego' ? 'numeric' : 'text';
+  const chipRow = (label, attr, map, cur) => `<div class="field"><span class="flabel">${label}</span><div class="chips" role="group" aria-label="${label}">${Object.entries(map).map(([k, l]) => `<button type="button" class="chip" ${attr}="${k}" aria-pressed="${cur === k}">${l}</button>`).join('')}</div></div>`;
+  $('sExtra').innerHTML = !it.owned ? '' :
+    it.type === 'lego' ? chipRow('État', 'data-cond', COND, it.cond) + (it.extra && it.extra.pieces ? `<p class="sub">${fmtN(it.extra.pieces)} pièces${it.extra.theme ? ' · ' + esc(it.extra.theme) : ''}${it.extra.year ? ' · ' + it.extra.year : ''}</p>` : '')
+    : it.type === 'jeu' ? `<div class="field"><span class="flabel" id="lPlays">Parties jouées</span><div class="plays" role="group" aria-labelledby="lPlays"><button type="button" class="iconbtn" data-plays="-1" aria-label="Une partie de moins"${it.plays ? '' : ' disabled'}>−</button><output aria-live="polite">${it.plays || 0}</output><button type="button" class="iconbtn" data-plays="1" aria-label="Une partie de plus">+</button></div></div>`
+      + (it.extra && (it.extra.players || it.extra.time) ? `<p class="sub">${[it.extra.players && `${esc(it.extra.players)} joueurs`, it.extra.time && `${esc(it.extra.time)} min`].filter(Boolean).join(' · ')}</p>` : '')
+    : isBook(it) ? chipRow('Format', 'data-format', FORMAT, it.format) : '';
+  $('sExtra').hidden = !$('sExtra').innerHTML;
   $('sPhoto').textContent = shown ? 'Changer la photo' : 'Ajouter une photo';
   const busy = state.identifying.has(it.id) ? 'Envoi de la photo…' : state.coverBusy.has(it.id) ? 'Recherche de couverture…' : '';
   const canCover = !shown && (it.type === 'livre' || it.type === 'bd');
@@ -267,13 +341,20 @@ function refreshSheet(){
   $('fBookRow').hidden = !isBook(it);
   const pub = [it.pubYear && `Paru en ${it.pubYear}`, it.publisher].filter(Boolean).join(' · ');
   $('fPub').textContent = pub; $('fPub').hidden = !pub || !isBook(it);
-  const moves = allowedMoves(it);
-  const primary = moves.includes('cadeau') ? 'cadeau' : null;
-  const rest = moves.filter(m => m !== primary && m !== 'pile');
-  $('sMoves').innerHTML =
-    (primary ? `<button type="button" class="big" data-move="cadeau">${svg('cadeau')}<span>Mettre dans ma liste cadeaux</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>` : '') +
-    (rest.length ? `<div class="moves">${rest.map(m => `<button type="button" class="move" data-move="${m}">${svg(m, 24, ICOLOR[m])}${STATUS[m]}</button>`).join('')}</div>` : '') +
-    (moves.includes('pile') ? `<button type="button" class="link" data-move="pile" style="align-self:center">Remettre dans ma pile</button>` : `<button type="button" class="link" data-act="close" style="align-self:center">Laisser dans ma pile pour l’instant</button>`);
+  const chev = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
+  const readMoves = isBook(it) ? ['termine', 'telecharge', 'abandonne'].filter(m => m !== it.status) : (!it.owned && it.status !== 'abandonne' ? ['abandonne'] : []);
+  let html = '';
+  if (!it.owned) {
+    html += `<button type="button" class="big own-big" data-own="1" data-close="1">${svg('termine')}<span>Je l’ai (acheté ou reçu)</span>${chev}</button>`;
+    if (it.status === 'pile') html += `<button type="button" class="big soft" data-move="cadeau">${svg('cadeau')}<span>Mettre dans ma liste cadeaux</span>${chev}</button>`;
+    if (it.status === 'cadeau') html += `<button type="button" class="big soft" data-move="pile">${svg('pile', 24, 'var(--accent)')}<span>Retirer de la liste cadeaux</span>${chev}</button>`;
+  }
+  if (readMoves.length) html += `<div class="moves">${readMoves.map(m => `<button type="button" class="move" data-move="${m}">${svg(m, 24, ICOLOR[m])}${STATUS[m]}</button>`).join('')}</div>`;
+  if (it.owned && isBook(it) && SHELVES.includes(it.status)) html += `<button type="button" class="link" data-move="collection" style="align-self:center">Remettre « à lire »</button>`;
+  if (!it.owned && SHELVES.includes(it.status)) html += `<button type="button" class="link" data-move="pile" style="align-self:center">Remettre dans mes envies</button>`;
+  if (it.owned) html += `<button type="button" class="link" data-act="gone" style="align-self:center">Je ne l’ai plus (vendu, donné)</button>`;
+  if (!html) html = `<button type="button" class="link" data-act="close" style="align-self:center">Fermer la fiche</button>`;
+  $('sMoves').innerHTML = html;
   $('sDanger').innerHTML = state.delArmed
     ? `<button type="button" class="link confirm" data-act="del-yes">Oui, supprimer la fiche</button><button type="button" class="link" data-act="del-no">Garder</button>`
     : `<button type="button" class="link" data-act="del">Supprimer la fiche</button>`;
@@ -315,10 +396,31 @@ function toast(msg, undo){
 }
 function move(id, status){
   const it = find(id); if (!it) return;
-  const prev = it.status, prevDone = it.doneAt || null;
+  const prev = {status: it.status, doneAt: it.doneAt || null};
   save(id, {status, doneAt: SHELVES.includes(status) ? Date.now() : null});
   closeSheet();
-  toast(status === 'pile' ? 'Remis dans ta pile' : `Rangé dans « ${STATUS[status]} »`, () => save(id, {status: prev, doneAt: prevDone}));
+  const msg = status === 'pile' ? (prev.status === 'cadeau' ? 'Retiré de la liste cadeaux' : 'Remis dans tes envies')
+    : status === 'collection' ? 'Remis « à lire » dans ta collection' : `Rangé dans « ${STATUS[status]} »`;
+  toast(msg, () => { save(id, prev); renderAll(); });
+  renderAll();
+}
+function setOwned(id, on, close){
+  const it = find(id); if (!it || !!it.owned === on) { if (close) closeSheet(); return; }
+  const prev = {owned: !!it.owned, ownedAt: it.ownedAt || null, status: it.status};
+  const patch = on
+    ? {owned: true, ownedAt: Date.now(), status: ['pile', 'cadeau', 'parti', 'achete'].includes(it.status) ? 'collection' : it.status}
+    : {owned: false, status: it.status === 'collection' ? 'pile' : it.status};
+  save(id, patch);
+  if (close) closeSheet(); else refreshSheet();
+  toast(on ? (prev.status === 'cadeau' ? 'Dans ta collection, et retiré de la liste cadeaux' : 'Ajouté à ta collection') : 'Remis dans tes envies', () => { save(id, prev); renderAll(); });
+  renderAll();
+}
+function markGone(id){
+  const it = find(id); if (!it) return;
+  const prev = {owned: !!it.owned, ownedAt: it.ownedAt || null, status: it.status};
+  save(id, {owned: false, status: it.status === 'collection' ? 'parti' : it.status});
+  closeSheet();
+  toast('Sorti de ta collection', () => { save(id, prev); renderAll(); });
   renderAll();
 }
 
@@ -351,10 +453,10 @@ async function onPhoto(file){
   const preview = URL.createObjectURL(blob);
   if (!(id && find(id))) {
     id = store.newId();
-    const it = {id, type: state.filter !== 'all' ? state.filter : 'livre', status: state.view === 'cadeaux' ? 'cadeau' : 'pile', title: '', creator: '', detail: '', note: '', photo: null, createdAt: now, updatedAt: now};
+    const it = newBase(id);
     state.previews[id] = preview;
     createItem(it);
-    if (state.view === 'etageres' || state.view === 'stats') setView('pile');
+    showTarget();
     renderAll();
     openSheet(id);
   } else { state.previews[id] = preview; }
@@ -377,15 +479,27 @@ function dataToBlob(u){
   return new Blob([a], {type: (u.slice(0, i).match(/data:([^;]+)/) || [])[1] || 'image/jpeg'});
 }
 
+/* New entries go where the + menu switch says: the collection, or the wishes. */
+function newBase(id, extra){
+  const now = Date.now(), toCol = state.addTo === 'collection';
+  const f = toCol ? state.colFilter : state.filter;
+  return { id, type: TYPES[f] ? f : 'livre', owned: toCol, ownedAt: toCol ? now : null,
+    status: toCol ? 'collection' : (state.view === 'envies' && state.envTab === 'gifts' ? 'cadeau' : 'pile'),
+    title: '', creator: '', detail: '', note: '', photo: null, plays: 0, extra: {}, createdAt: now, updatedAt: now, ...extra };
+}
+function showTarget(){
+  if (state.addTo === 'collection') { if (state.view !== 'collection') setView('collection'); }
+  else if (state.view !== 'envies') setView('envies');
+}
 function addManual(){
-  const now = Date.now(), id = store.newId();
-  const it = {id, type: state.filter !== 'all' ? state.filter : 'livre', status: state.view === 'cadeaux' ? 'cadeau' : 'pile', title: '', creator: '', detail: '', note: '', photo: null, createdAt: now, updatedAt: now};
-  if (state.view === 'etageres') setView('pile');
+  const id = store.newId();
+  const it = newBase(id);
+  showTarget();
   createItem(it); renderAll(); openSheet(id);
   setTimeout(() => $('fTitle') && $('fTitle').focus(), 50);
 }
 
-function renderAll(){ renderPile(); renderGifts(); renderShelf(); renderStats(); refreshSheet(); }
+function renderAll(){ renderCollection(); renderPile(); renderGifts(); renderShelf(); renderStats(); refreshSheet(); }
 
 /* ---------- book details: cover, pages, year, publisher, genre ----------
    Sources: BnF catalogue (best for French books), Open Library, then Google Books.
@@ -554,7 +668,7 @@ function renderStats(){
   if (!state.ready) { body.innerHTML = '<p class="sub">Chargement…</p>'; return; }
   const list = reads.filter(i => when(i).getFullYear() === y).sort((a, b) => when(a) - when(b));
   if (!list.length) {
-    body.innerHTML = `<div class="empty"><strong>Aucune lecture terminée en ${y}</strong>Range un livre ou une BD dans « Terminé » depuis sa fiche, ou importe tes lectures Goodreads depuis l’onglet Étagères.</div>`;
+    body.innerHTML = `<div class="empty"><strong>Aucune lecture terminée en ${y}</strong>Range un livre ou une BD dans « Terminé » depuis sa fiche, ou importe tes lectures Goodreads depuis l’onglet Lectures.</div>`;
     return;
   }
   const val = i => mode === 'pages' ? (i.pages || 0) : 1;
@@ -712,7 +826,7 @@ async function grImport(){
   state.shelf = 'termine'; renderShelf();
   grRender(`<strong>${done} livre${done > 1 ? 's' : ''} ajouté${done > 1 ? 's' : ''}</strong> à l’étagère « Terminé » pour ${gr.year}${fill.length ? `, ${fill.length} fiche${fill.length > 1 ? 's' : ''} complétée${fill.length > 1 ? 's' : ''}` : ''}.`);
 }
-$('grBtn').onclick = () => { if (!store) { toast('Encore un instant, ta pile se charge.'); return; } $('grFile').click(); };
+$('grBtn').onclick = () => { if (!store) { toast('Encore un instant, tes fiches se chargent.'); return; } $('grFile').click(); };
 $('grFile').onchange = async e => {
   const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
   try { const books = grParse(await f.text());
@@ -730,17 +844,24 @@ document.addEventListener('click', e => {
   if (t.dataset.open) { openSheet(t.dataset.open); return; }
   if (t.dataset.go) { setView(t.dataset.go); return; }
   if (t.dataset.filter) { state.filter = t.dataset.filter; renderPile(); return; }
+  if (t.dataset.cfilter) { state.colFilter = t.dataset.cfilter; renderCollection(); return; }
+  if (t.dataset.env) { setEnvTab(t.dataset.env); return; }
+  if (t.dataset.own && state.openId) { flushSave(); setOwned(state.openId, t.dataset.own === '1', !!t.dataset.close); return; }
+  if (t.dataset.cond && state.openId) { const it = find(state.openId); save(state.openId, {cond: it && it.cond === t.dataset.cond ? null : t.dataset.cond}); renderAll(); return; }
+  if (t.dataset.format && state.openId) { const it = find(state.openId); save(state.openId, {format: it && it.format === t.dataset.format ? null : t.dataset.format}); renderAll(); return; }
+  if (t.dataset.plays && state.openId) { const it = find(state.openId); if (it) { save(state.openId, {plays: Math.max(0, (it.plays || 0) + (+t.dataset.plays))}); renderAll(); } return; }
   if (t.dataset.shelf) { state.shelf = t.dataset.shelf; renderShelf(); return; }
   if (t.dataset.syear) { state.statYear = +t.dataset.syear; renderStats(); return; }
   if (t.dataset.smode) { state.statMode = t.dataset.smode; renderStats(); return; }
   if (t.dataset.smonth) { const el = $('sm-' + t.dataset.smonth); if (el) el.scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start'}); return; }
-  if (t.dataset.type && state.openId) { save(state.openId, {type: t.dataset.type}); refreshSheet(); renderPile(); return; }
+  if (t.dataset.type && state.openId) { save(state.openId, {type: t.dataset.type}); renderAll(); return; }
   if (t.dataset.move && state.openId) { move(state.openId, t.dataset.move); return; }
   const act = t.dataset.act;
   if (act === 'photo') { if (!store) return; setMenu(true); }
   else if (act === 'library') { state.camTarget = null; $('lib').click(); }
   else if (act === 'zoom' && state.openId) { const it = find(state.openId); const src = it && (it.photo || state.previews[it.id]); if (src) openPhoto(src, t); }
   else if (act === 'close') closeSheet();
+  else if (act === 'gone' && state.openId) { flushSave(); markGone(state.openId); }
   else if (act === 'cover' && state.openId) { flushSave(); delete state.idNote[state.openId]; autoEnrich(state.openId, true); }
   else if (act === 'uncover' && state.openId) { delete state.idNote[state.openId]; save(state.openId, {photo: null, coverFrom: 'none'}); renderAll(); toast('Couverture retirée. Tu peux ajouter une photo ou relancer la recherche.'); }
   else if (act === 'del') { state.delArmed = true; refreshSheet(); }
@@ -748,12 +869,18 @@ document.addEventListener('click', e => {
   else if (act === 'del-yes') { const id = state.openId; clearTimeout(saveTimer); state.openId = null; $('sheetWrap').hidden = true; document.body.style.overflow = '';
     const gone = find(id); pendingNew.delete(id); state.items = state.items.filter(i => i.id !== id); store.remove(id, gone && gone.photo).catch(() => toast('Suppression impossible. Réessaie.')); renderAll(); toast('Fiche supprimée'); }
 });
-function setMenu(open){
-  $('addMenu').hidden = !open; $('fab').setAttribute('aria-expanded', String(open));
-  if (open) $('addMenu').querySelector('button').focus({preventScroll: true});
+function setAddTo(to){
+  state.addTo = to === 'envie' ? 'envie' : 'collection';
+  document.querySelectorAll('[data-to]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.to === state.addTo)));
 }
-$('fab').onclick = () => { if (!store) { toast('Encore un instant, ta pile se charge.'); return; } setMenu($('addMenu').hidden); };
+function setMenu(open){
+  if (open) setAddTo(state.view === 'envies' ? 'envie' : 'collection');
+  $('addMenu').hidden = !open; $('fab').setAttribute('aria-expanded', String(open));
+  if (open) $('addMenu').querySelector('[data-add]').focus({preventScroll: true});
+}
+$('fab').onclick = () => { if (!store) { toast('Encore un instant, tes fiches se chargent.'); return; } setMenu($('addMenu').hidden); };
 $('addMenu').addEventListener('click', e => {
+  const to = e.target.closest('[data-to]'); if (to) { setAddTo(to.dataset.to); return; }
   const b = e.target.closest('[data-add]'); if (!b) return;
   setMenu(false); state.camTarget = null;
   if (b.dataset.add === 'scan') openScanner();
@@ -762,6 +889,7 @@ $('addMenu').addEventListener('click', e => {
 document.addEventListener('pointerdown', e => { if (!$('addMenu').hidden && !e.target.closest('#addMenu, #fab')) setMenu(false); });
 $('cam').onchange = $('lib').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) onPhoto(f); };
 $('q').oninput = e => { state.q = e.target.value; renderPile(); };
+$('cq').oninput = e => { state.cq = e.target.value; renderCollection(); };
 $('sheetWrap').addEventListener('click', e => { if (e.target === $('sheetWrap')) closeSheet(); });
 $('sheet').addEventListener('input', e => { if (['fTitle','fCreator','fDetail','fNote','fPages','fGenre'].includes(e.target.id)) { scheduleSave(); $('sheetTitle').textContent = $('fTitle').value.trim() || 'Nouvelle envie'; $('sCreator').textContent = $('fCreator').value; } });
 $('sheet').addEventListener('click', e => { if (e.target.closest('#sClose')) closeSheet(); if (e.target.closest('#sPhoto')) { flushSave(); state.camTarget = state.openId; $('lib').click(); } });
@@ -878,7 +1006,7 @@ async function lookupIsbn(isbn){
 const scan = { stream: null, timer: null, busy: false, session: 0 };
 const scanHint = t => { $('scanHint').textContent = t; };
 async function openScanner(){
-  if (!store) { toast('Encore un instant, ta pile se charge.'); return; }
+  if (!store) { toast('Encore un instant, tes fiches se chargent.'); return; }
   const session = ++scan.session;
   scan.busy = false; $('isbnIn').value = '';
   $('scanner').hidden = false; document.body.style.overflow = 'hidden';
@@ -962,11 +1090,10 @@ async function onCode(raw){
   else createFromScan({ isbn, note: `ISBN ${isbn}` }, navigator.onLine ? 'ISBN introuvable en ligne : indique le titre et l’auteur.' : 'Pas de connexion : indique le titre, la couverture sera cherchée plus tard.');
 }
 function createFromScan(d, note){
-  const now = Date.now(), id = store.newId();
-  const it = { id, type: d.type || (['livre', 'bd'].includes(state.filter) ? state.filter : 'livre'), status: state.view === 'cadeaux' ? 'cadeau' : 'pile',
-    title: d.title || '', creator: d.creator || '', detail: '', note: d.note || '', photo: d.photo || null, coverFrom: d.photo ? d.coverFrom : null,
-    isbn: d.isbn || null, createdAt: now, updatedAt: now };
-  if (state.view === 'etageres' || state.view === 'stats') setView('pile');
+  const id = store.newId(), base = newBase(id);
+  const it = { ...base, type: d.type || (['livre', 'bd'].includes(base.type) ? base.type : 'livre'),
+    title: d.title || '', creator: d.creator || '', note: d.note || '', photo: d.photo || null, coverFrom: d.photo ? d.coverFrom : null, isbn: d.isbn || null };
+  showTarget();
   createItem(it); state.idNote[id] = note; renderAll(); openSheet(id);
   if (!it.title) setTimeout(() => $('fTitle') && $('fTitle').focus(), 60);
 }
@@ -1016,7 +1143,7 @@ async function importBackup(file){
   if (!Array.isArray(list)) { msg('Ce fichier n’est pas une sauvegarde Ma Pile.'); return; }
   const have = new Set(state.items.map(i => i.id));
   const todo = list.filter(x => x && x.id && !have.has(String(x.id)) && TYPES[x.type] && STATUS[x.status]);
-  if (!todo.length) { msg('Rien à importer : toutes ces fiches sont déjà dans ta pile.'); return; }
+  if (!todo.length) { msg('Rien à importer : toutes ces fiches sont déjà là.'); return; }
   importing = true; let done = 0, fail = 0, firstErr = '';
   for (const x of todo) {
     msg(`<span class="busy"><span class="spin"></span>Import en cours : ${done + fail} / ${todo.length}</span>`);
@@ -1105,7 +1232,7 @@ renderAll();
   sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
   let session = null;
   try { session = (await sb.auth.getSession()).data.session; } catch (e) {}
-  setView(location.hash.slice(1) || 'pile');
+  setView(location.hash.slice(1) || 'collection');
   if (session) enter(session.user); else lock(true);
   sb.auth.onAuthStateChange((ev, s) => { if (s && !user) enter(s.user); });
 })();

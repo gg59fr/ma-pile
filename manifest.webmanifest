@@ -1,9 +1,9 @@
 {
   "name": "Ma Pile",
   "short_name": "Ma Pile",
-  "description": "Mes envies de livres, BD, jeux, Lego et objets.",
+  "description": "Ma collection de livres, BD, jeux, Lego et objets, et mes envies.",
   "lang": "fr",
-  "start_url": "./#pile",
+  "start_url": "./#collection",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
