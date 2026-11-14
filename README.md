@@ -31,3 +31,4 @@ Après une modification, change `VERSION` dans `sw.js` pour que les téléphones
 | `sw.js` | Fonctionnement hors connexion |
 | `manifest.webmanifest`, `icons/` | Installation sur l'écran d'accueil |
 | `supabase/schema.sql` | Table, stockage des photos et règles d'accès |
+| `supabase/functions/lego-catalog-sync` | Fonction serveur qui recharge le catalogue Lego (Rebrickable) |

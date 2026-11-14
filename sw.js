@@ -1,6 +1,6 @@
 // Ma Pile service worker: the app shell opens offline, photos are kept once seen.
 // Bump VERSION on every release so phones pick up the new files.
-const VERSION = 'v11';
+const VERSION = 'v12';
 const SHELL = `mapile-shell-${VERSION}`;
 const RUNTIME = 'mapile-runtime';
 const PHOTOS = 'mapile-photos';
@@ -30,7 +30,7 @@ self.addEventListener('fetch', e => {
     return;
   }
   // Covers found online: cache first as well.
-  if (/(^|\.)(covers\.openlibrary\.org|archive\.org)$/.test(url.hostname) || (url.hostname === 'books.google.com' && url.pathname.startsWith('/books/content'))) {
+  if (/(^|\.)(covers\.openlibrary\.org|archive\.org|cdn\.rebrickable\.com)$/.test(url.hostname) || (url.hostname === 'books.google.com' && url.pathname.startsWith('/books/content'))) {
     e.respondWith(cacheFirst(req, PHOTOS));
     return;
   }

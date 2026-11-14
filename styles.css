@@ -299,3 +299,16 @@ img{max-width:100%}
 
 .check{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;font-weight:600;cursor:pointer}
 .check input{width:20px;height:20px;accent-color:var(--c-lego)}
+
+/* Lego catalog */
+.cat-row{display:flex;align-items:center;gap:12px;padding:8px 10px 8px 8px;background:var(--surface);border:2px solid var(--line);border-radius:14px}
+.cat-row .mini{flex:none;width:64px;height:52px;border:2px solid var(--line);border-radius:6px;background:#fff;overflow:hidden}
+.cat-row .mini img{width:100%;height:100%;object-fit:contain;display:block}
+.cat-row .meta{flex:1}
+.cat-row .meta .t{white-space:normal;font-size:14px;line-height:1.2}
+.cat-act{flex:none;display:flex;align-items:center;gap:6px}
+.cat-act .cat-own{min-height:44px;padding:0 12px;font-size:14px;box-shadow:2px 2px 0 var(--shadow)}
+.pill-btn{min-height:36px;padding:0 10px;border:2px solid var(--line);border-radius:999px;background:var(--surface);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.pill-btn.own{background:var(--c-lego);color:var(--cover-light)}
+.sheet > *{flex-shrink:0}
+.cat-row .meta .w{white-space:normal}

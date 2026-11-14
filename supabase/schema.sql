@@ -150,3 +150,42 @@ grant execute on function public.gift_list(text), public.reserve_gift(text, text
 
 -- Drop default privileges the app never uses (TRUNCATE would bypass row-level security).
 revoke truncate, trigger, references on table public.items, public.gift_lists, public.reservations from anon, authenticated;
+
+-- Lego catalog -----------------------------------------------------------
+-- Every Lego set from Rebrickable's free CSV downloads (about 28 600 sets, ~14 MB with indexes),
+-- refreshed by the lego-catalog-sync edge function (supabase/functions/lego-catalog-sync).
+-- Images are links to Rebrickable's CDN, nothing is stored. Barcodes (ean, upc) are not in
+-- those downloads: the columns stay empty until another source fills them.
+create extension if not exists pg_trgm with schema extensions;
+create table if not exists public.lego_sets (
+  set_num    text primary key,
+  num        text generated always as (split_part(set_num, '-', 1)) stored,
+  name       text not null,
+  year       integer,
+  theme      text,
+  theme_path text,
+  pieces     integer,
+  img        text,
+  ean        text[] not null default '{}',
+  upc        text[] not null default '{}',
+  updated_at timestamptz not null default now()
+);
+create index if not exists lego_sets_num_idx   on public.lego_sets (num text_pattern_ops);
+create index if not exists lego_sets_theme_idx on public.lego_sets (theme);
+create index if not exists lego_sets_ean_idx   on public.lego_sets using gin (ean);
+create index if not exists lego_sets_name_trgm on public.lego_sets using gin (name extensions.gin_trgm_ops);
+alter table public.lego_sets enable row level security;
+drop policy if exists "lego_sets: read" on public.lego_sets;
+create policy "lego_sets: read" on public.lego_sets for select to authenticated using (true);
+
+-- One row: when the catalog was last refreshed (the function waits 6 hours between runs).
+create table if not exists public.lego_sync (
+  id     integer primary key default 1 check (id = 1),
+  ran_at timestamptz,
+  rows   integer
+);
+alter table public.lego_sync enable row level security;   -- no policy: only the server function touches it
+
+grant select on table public.lego_sets to authenticated;
+grant select, insert, update on table public.lego_sets, public.lego_sync to service_role;
+revoke truncate, trigger, references on table public.lego_sets, public.lego_sync from anon, authenticated;

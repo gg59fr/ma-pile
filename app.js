@@ -38,7 +38,7 @@ const ago = ms => { if (!ms) return ''; const d = Math.floor((Date.now() - ms) /
   if (d < 60) return `Ajouté il y a ${Math.floor(d / 7)} sem.`; return `Ajouté il y a ${Math.floor(d / 30)} mois`; };
 
 const state = { items: [], ready: false, view: 'collection', filter: 'all', q: '', shelf: 'termine', colFilter: 'all', cq: '', envTab: 'buy', addTo: 'collection',
-  openId: null, identifying: new Set(), idNote: {}, previews: {}, coverBusy: new Set(), coverTried: {}, camTarget: null, delArmed: false, accountOpen: false };
+  openId: null, identifying: new Set(), idNote: {}, previews: {}, coverBusy: new Set(), coverTried: {}, camTarget: null, delArmed: false, accountOpen: false, catalogOpen: false };
 let store = null, sb = null, user = null;
 const pendingNew = new Map();
 function createItem(it){ pendingNew.set(it.id, it); state.items.push(it); put(it.id, it); }
@@ -264,7 +264,7 @@ function renderShelf(){
 /* ---------- fiche (sheet) ---------- */
 const find = id => state.items.find(i => i.id === id);
 function openSheet(id){
-  state.openId = id; state.delArmed = false;
+  state.openId = id; state.delArmed = false; state.catalogOpen = state.accountOpen = false;
   const it = find(id); if (!it) return;
   const T = Object.keys(TYPES);
   $('sheet').innerHTML = `
@@ -300,12 +300,12 @@ function openSheet(id){
   $('sClose').focus({preventScroll: true});
 }
 function closeSheet(){
-  if (state.accountOpen) { state.accountOpen = false; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = ''; return; }
+  if (state.accountOpen || state.catalogOpen) { state.accountOpen = state.catalogOpen = false; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = ''; return; }
   if (!state.openId) return;
   flushSave();
   const closed = state.openId;
   state.openId = null; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = '';
-  autoEnrich(closed);
+  autoEnrich(closed); legoEnrich(closed);
 }
 function refreshSheet(){
   const it = state.openId && find(state.openId);
@@ -334,7 +334,7 @@ function refreshSheet(){
   const canCover = !shown && (it.type === 'livre' || it.type === 'bd');
   const fromWeb = it.photo && it.coverFrom && it.coverFrom !== 'none';
   $('sId').innerHTML = busy ? `<span class="busy"><span class="spin"></span>${busy}</span>`
-    : esc(state.idNote[it.id] || (fromWeb ? `Couverture trouvée en ligne (${it.coverFrom === 'googlebooks' ? 'Google Books' : 'Open Library'}).` : ''))
+    : esc(state.idNote[it.id] || (fromWeb ? `Image trouvée en ligne (${({googlebooks: 'Google Books', rebrickable: 'catalogue Rebrickable'})[it.coverFrom] || 'Open Library'}).` : ''))
       + (canCover ? ' <button type="button" class="link" data-act="cover" style="padding:4px 0">Chercher une couverture</button>' : '')
       + (fromWeb ? ' <button type="button" class="link" data-act="uncover" style="padding:4px 0">Pas la bonne ? Retirer</button>' : '');
   document.querySelectorAll('#fType .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === it.type)));
@@ -1001,6 +1001,7 @@ $('addMenu').addEventListener('click', e => {
   const b = e.target.closest('[data-add]'); if (!b) return;
   setMenu(false); state.camTarget = null;
   if (b.dataset.add === 'scan') openScanner();
+  else if (b.dataset.add === 'lego') openCatalog();
   else if (b.dataset.add === 'cam') $('cam').click(); else if (b.dataset.add === 'lib') $('lib').click(); else addManual();
 });
 document.addEventListener('pointerdown', e => { if (!$('addMenu').hidden && !e.target.closest('#addMenu, #fab')) setMenu(false); });
@@ -1008,13 +1009,14 @@ $('cam').onchange = $('lib').onchange = e => { const f = e.target.files && e.tar
 $('q').oninput = e => { state.q = e.target.value; renderPile(); };
 $('cq').oninput = e => { state.cq = e.target.value; renderCollection(); };
 $('sheetWrap').addEventListener('click', e => { if (e.target === $('sheetWrap')) closeSheet(); });
+$('sheet').addEventListener('change', e => { if (e.target.id === 'fDetail' && state.openId) { const it = find(state.openId); if (it && it.type === 'lego') { flushSave(); legoEnrich(state.openId); } } });
 $('sheet').addEventListener('input', e => { if (['fTitle','fCreator','fDetail','fNote','fPages','fGenre'].includes(e.target.id)) { scheduleSave(); $('sheetTitle').textContent = $('fTitle').value.trim() || 'Nouvelle envie'; $('sCreator').textContent = $('fCreator').value; } });
 $('sheet').addEventListener('click', e => { if (e.target.closest('#sClose')) closeSheet(); if (e.target.closest('#sPhoto')) { flushSave(); state.camTarget = state.openId; $('lib').click(); } });
 let lbReturn = null;
-function openPhoto(src, from){ lbReturn = from || null; $('lbImg').src = src; $('lightbox').hidden = false; $('lbClose').focus({preventScroll: true}); }
+function openPhoto(src, from){ lbReturn = from || null; const big = RB_THUMB.exec(src || ''); $('lbImg').src = big ? `${big[1]}/1000x800p.jpg` : src; $('lightbox').hidden = false; $('lbClose').focus({preventScroll: true}); }
 function closePhoto(){ if ($('lightbox').hidden) return false; $('lightbox').hidden = true; $('lbImg').removeAttribute('src'); if (lbReturn && document.contains(lbReturn)) lbReturn.focus({preventScroll: true}); lbReturn = null; return true; }
 $('lightbox').addEventListener('click', e => { e.stopPropagation(); closePhoto(); });
-document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('scanner').hidden) { closeScanner(); return; } if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen) closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('scanner').hidden) { closeScanner(); return; } if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen || state.catalogOpen) closeSheet(); });
 window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
 $('copyGifts').onclick = () => {
   const text = giftText(), ta = $('giftText');
@@ -1192,6 +1194,15 @@ async function onCode(raw){
   const code = String(raw).replace(/[^0-9X]/gi, '');
   const isbn = toIsbn13(code);
   if (!isbn) {
+    const lego = /^\d{3,7}$/.test(code) ? await legoByNum(code) : /^\d{8,14}$/.test(code) && !/^97[89]/.test(code) ? await legoByEan(code) : null;
+    if (lego) {
+      const dupL = state.items.find(i => i.type === 'lego' && legoNum(i) === lego.num);
+      closeScanner();
+      if (dupL) { openSheet(dupL.id); toast(`Déjà dans tes fiches : « ${STATUS[dupL.status] || ''} »`); return; }
+      createFromScan({ ...legoFields(lego), type: 'lego' }, 'Fiche remplie d’après le catalogue Lego : vérifie et corrige si besoin.');
+      return;
+    }
+    if (/^\d{3,7}$/.test(code)) { scan.busy = false; scanHint(`Aucun set Lego n° ${code} dans le catalogue. Vérifie le numéro.`); return; }
     if (/^\d{8,13}$/.test(code) && !/^97[89]/.test(code)) {
       closeScanner();
       createFromScan({ note: `Code-barres ${code}`, type: ['jeu', 'lego', 'objet'].includes(state.filter) ? state.filter : 'objet' }, 'Ce code-barres n’est pas celui d’un livre : indique le titre et choisis le type.');
@@ -1209,7 +1220,8 @@ async function onCode(raw){
 function createFromScan(d, note){
   const id = store.newId(), base = newBase(id);
   const it = { ...base, type: d.type || (['livre', 'bd'].includes(base.type) ? base.type : 'livre'),
-    title: d.title || '', creator: d.creator || '', note: d.note || '', photo: d.photo || null, coverFrom: d.photo ? d.coverFrom : null, isbn: d.isbn || null };
+    title: d.title || '', creator: d.creator || '', note: d.note || '', photo: d.photo || null, coverFrom: d.photo ? d.coverFrom : null, isbn: d.isbn || null,
+    detail: d.detail || '', extra: d.extra || {}, pubYear: d.pubYear || null };
   showTarget();
   createItem(it); state.idNote[id] = note; renderAll(); openSheet(id);
   if (!it.title) setTimeout(() => $('fTitle') && $('fTitle').focus(), 60);
@@ -1219,6 +1231,106 @@ $('scanPhoto').onclick = () => $('scanFile').click();
 $('scanFile').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) decodePhoto(f); };
 $('isbnForm').addEventListener('submit', e => { e.preventDefault(); const v = $('isbnIn').value.trim(); if (!v) { scanHint('Tape les 10 ou 13 chiffres de l’ISBN.'); return; } scan.busy = false; onCode(v); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && !$('scanner').hidden) closeScanner(); });
+
+/* ---------- Lego catalog (Rebrickable sets, refreshed by the lego-catalog-sync function) ---------- */
+const LEGO_COLS = 'set_num,num,name,year,theme,theme_path,pieces,img';
+// Rebrickable's original images weigh several MB: lists and cards use the 250 px thumbnail,
+// the full-screen view switches to the 1000 px one.
+const RB_SET = /^https:\/\/cdn\.rebrickable\.com\/media\/sets\/([^?#]+\.(?:jpg|png))$/i;
+const RB_THUMB = /^(https:\/\/cdn\.rebrickable\.com\/media\/thumbs\/sets\/[^/]+)\/\d+x\d+p\.jpg$/i;
+const legoThumb = (img, size = '250x250') => { const m = RB_SET.exec(img || ''); return m ? `https://cdn.rebrickable.com/media/thumbs/sets/${m[1]}/${size}p.jpg` : img; };
+const legoNum = it => (it.extra && it.extra.set ? String(it.extra.set).split('-')[0] : String(it.detail || '').trim().split(/[-\s]/)[0]);
+const legoFields = l => ({ title: l.name, detail: l.num, photo: l.img ? legoThumb(l.img) : null, coverFrom: l.img ? 'rebrickable' : null, pubYear: l.year || null,
+  extra: { set: l.set_num, pieces: l.pieces || undefined, theme: l.theme || undefined, year: l.year || undefined } });
+async function legoByNum(n){
+  const num = String(n).trim().split('-')[0];
+  if (!sb || !/^\d{3,7}$/.test(num)) return null;
+  try { const { data } = await sb.from('lego_sets').select(LEGO_COLS).eq('num', num).order('set_num').limit(1); return data && data[0] || null; } catch (e) { return null; }
+}
+async function legoByEan(code){
+  if (!sb) return null;
+  try { const { data } = await sb.from('lego_sets').select(LEGO_COLS).contains('ean', [code]).limit(1); return data && data[0] || null; } catch (e) { return null; }
+}
+/* Fill a Lego entry from its set number: name if empty, image if none, pieces, theme and year. */
+async function legoEnrich(id){
+  const it = find(id); if (!it || it.type !== 'lego') return;
+  const num = legoNum(it); if (!num || (it.extra && it.extra.set && String(it.extra.set).split('-')[0] === num && it.extra.pieces)) return;
+  const l = await legoByNum(num); const cur = find(id); if (!cur) return;
+  if (!l) { state.idNote[id] = `Aucun set n° ${num} dans le catalogue Lego.`; renderAll(); return; }
+  const f = legoFields(l), patch = { extra: { ...(cur.extra || {}), ...f.extra } };
+  if (!(cur.title || '').trim()) patch.title = f.title;
+  if (!cur.photo && f.photo) { patch.photo = f.photo; patch.coverFrom = f.coverFrom; }
+  if (!cur.pubYear && f.pubYear) patch.pubYear = f.pubYear;
+  save(id, patch);
+  if (id === state.openId && patch.title && $('fTitle')) $('fTitle').value = patch.title;
+  state.idNote[id] = `Trouvé dans le catalogue : ${l.name}, ${fmtN(l.pieces || 0)} pièces, ${l.year}.`;
+  renderAll();
+}
+
+const cat = { q: '', theme: 'Modular Buildings', rows: [], busy: false, seq: 0, timer: null };
+function openCatalog(){
+  if (!sb) return;
+  state.catalogOpen = true;
+  $('sheet').innerHTML = `
+    <div class="sheet-bar"><h2 id="sheetTitle">Catalogue Lego</h2>
+      <button type="button" class="iconbtn" id="sClose" aria-label="Fermer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <label for="catQ" class="sr">Numéro ou nom du set</label>
+    <div class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="catQ" type="search" inputmode="search" autocomplete="off" placeholder="N° de set ou nom anglais (Bookshop…)" value="${esc(cat.q)}"></div>
+    <div class="chips" role="group" aria-label="Raccourcis">
+      <button type="button" class="chip" data-ctheme="Modular Buildings" aria-pressed="${cat.theme === 'Modular Buildings'}">Modulaires</button>
+      <button type="button" class="chip" data-ctheme="LEGO Ideas and CUUSOO" aria-pressed="${cat.theme === 'LEGO Ideas and CUUSOO'}">Ideas</button>
+      <button type="button" class="chip" data-ctheme="Botanicals" aria-pressed="${cat.theme === 'Botanicals'}">Botanique</button>
+    </div>
+    <ul class="rows" id="catList" aria-live="polite"></ul>
+    <p class="chart-note">Catalogue Rebrickable, noms en anglais, mis à jour automatiquement. Touche « Je l’ai » ou le cœur pour ajouter un set en un geste.</p>`;
+  $('sheetWrap').hidden = false; document.body.style.overflow = 'hidden';
+  catSearch();
+  setTimeout(() => $('catQ') && $('catQ').focus({preventScroll: true}), 60);
+}
+async function catSearch(){
+  const seq = ++cat.seq, q = cat.q.trim();
+  const list = $('catList'); if (!list) return;
+  if (!q && !cat.theme) { list.innerHTML = '<li class="sub">Tape un numéro de set ou un nom.</li>'; return; }
+  list.innerHTML = '<li class="busy"><span class="spin"></span>Recherche…</li>';
+  let query = sb.from('lego_sets').select(LEGO_COLS);
+  if (/^\d{3,7}(-\d+)?$/.test(q)) query = query.eq('num', q.split('-')[0]).order('set_num').limit(10);
+  else if (q) query = query.ilike('name', `%${q.replace(/[%_]/g, ' ')}%`).order('year', {ascending: false}).limit(40);
+  else query = query.eq('theme', cat.theme).order('year', {ascending: false}).limit(60);
+  const { data, error } = await query;
+  if (seq !== cat.seq || !$('catList')) return;
+  if (error) { list.innerHTML = '<li class="sub">Recherche impossible. Vérifie ta connexion.</li>'; return; }
+  cat.rows = data || [];
+  renderCatalog();
+}
+function renderCatalog(){
+  const list = $('catList'); if (!list) return;
+  if (!cat.rows.length) { list.innerHTML = '<li class="sub">Aucun set trouvé. Essaie le numéro imprimé sur la boîte.</li>'; return; }
+  const mine = new Map(state.items.filter(i => i.type === 'lego').map(i => [legoNum(i), i]));
+  list.innerHTML = cat.rows.map(l => {
+    const it = mine.get(l.num);
+    const act = it
+      ? `<button type="button" class="pill-btn ${it.owned ? 'own' : ''}" data-open="${esc(it.id)}">${it.owned ? 'Dans ma collection' : 'En envie'}</button>`
+      : `<button type="button" class="btn sun cat-own" data-cadd="${esc(l.set_num)}" data-cto="collection">Je l’ai</button><button type="button" class="iconbtn" data-cadd="${esc(l.set_num)}" data-cto="envie" aria-label="Ajouter ${esc(l.name)} à mes envies"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg></button>`;
+    return `<li class="cat-row"><span class="mini" style="--c:var(--c-lego)">${l.img ? `<img src="${esc(legoThumb(l.img))}" alt="" loading="lazy">` : ''}</span>
+      <span class="meta"><span class="t">${esc(l.name)}</span><span class="w">${esc(l.num)} · ${l.year || '—'}${l.pieces ? ` · ${fmtN(l.pieces)} pièces` : ''}</span></span>
+      <span class="cat-act">${act}</span></li>`;
+  }).join('');
+}
+function catAdd(setNum, to){
+  const l = cat.rows.find(r => r.set_num === setNum); if (!l || !store) return;
+  const prev = state.addTo; state.addTo = to;
+  const id = store.newId(), base = newBase(id);
+  state.addTo = prev;
+  createItem({ ...base, type: 'lego', ...legoFields(l) });
+  renderAll(); renderCatalog();
+  toast(to === 'collection' ? `${l.name} ajouté à ta collection` : `${l.name} ajouté à tes envies`);
+}
+$('sheet').addEventListener('input', e => { if (e.target.id === 'catQ') { cat.q = e.target.value; if (cat.q.trim()) cat.theme = ''; clearTimeout(cat.timer); cat.timer = setTimeout(catSearch, 250); } });
+$('sheet').addEventListener('click', e => {
+  const th = e.target.closest('[data-ctheme]'); if (th) { cat.theme = th.dataset.ctheme; cat.q = ''; openCatalog(); return; }
+  const add = e.target.closest('[data-cadd]'); if (add) { catAdd(add.dataset.cadd, add.dataset.cto); return; }
+});
 
 /* ---------- account + backup ---------- */
 const USER_SVG = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>';
