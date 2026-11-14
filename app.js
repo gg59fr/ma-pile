@@ -1380,8 +1380,9 @@ async function catSearch(){
   list.innerHTML = '<li class="busy"><span class="spin"></span>Recherche…</li>';
   let query = sb.from('lego_sets').select(LEGO_COLS);
   if (/^\d{3,7}(-\d+)?$/.test(q)) query = query.eq('num', q.split('-')[0]).order('set_num').limit(10);
-  else if (q) query = query.ilike('name', `%${q.replace(/[%_]/g, ' ')}%`).order('year', {ascending: false}).limit(40);
-  else query = query.eq('theme', cat.theme).order('year', {ascending: false}).limit(60);
+  // Name and theme lists show buildable sets only: bags, key chains, books and clothing have no pieces.
+  else if (q) query = query.ilike('name', `%${q.replace(/[%_]/g, ' ')}%`).gt('pieces', 0).order('year', {ascending: false}).limit(40);
+  else query = query.eq('theme', cat.theme).gt('pieces', 0).order('year', {ascending: false}).limit(60);
   const { data, error } = await query;
   if (seq !== cat.seq || !$('catList')) return;
   if (error) { list.innerHTML = '<li class="sub">Recherche impossible. Vérifie ta connexion.</li>'; return; }
