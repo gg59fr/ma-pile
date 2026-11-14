@@ -55,14 +55,14 @@ const toRow = (id, d, uid) => ({
   photo: d.photo || null, source: d.source || null, cover_from: d.coverFrom || null, isbn: d.isbn || null,
   pages: d.pages || null, pub_year: d.pubYear || null, publisher: d.publisher || null, genre: d.genre || null, meta_checked: d.metaChecked || null,
   owned: !!d.owned, owned_at: d.ownedAt ? Math.round(d.ownedAt) : null, format: d.format || null, cond: d.cond || null,
-  plays: Math.max(0, d.plays | 0), extra: d.extra && typeof d.extra === 'object' ? d.extra : {},
+  plays: Math.max(0, d.plays | 0), extra: d.extra && typeof d.extra === 'object' ? d.extra : {}, price: d.price == null || d.price === '' ? null : Number(d.price),
   created_at: Math.round(d.createdAt || Date.now()), updated_at: Math.round(d.updatedAt || Date.now()),
   done_at: d.doneAt ? Math.round(d.doneAt) : null });
 const fromRow = r => ({
   id: r.id, type: r.type, status: r.status, title: r.title, creator: r.creator, detail: r.detail, note: r.note,
   photo: r.photo, source: r.source, coverFrom: r.cover_from, isbn: r.isbn || null,
   pages: r.pages || null, pubYear: r.pub_year || null, publisher: r.publisher || null, genre: r.genre || null, metaChecked: r.meta_checked ? Number(r.meta_checked) : null,
-  owned: !!r.owned, ownedAt: r.owned_at ? Number(r.owned_at) : null, format: r.format || null, cond: r.cond || null, plays: r.plays | 0, extra: r.extra || {},
+  owned: !!r.owned, ownedAt: r.owned_at ? Number(r.owned_at) : null, format: r.format || null, cond: r.cond || null, plays: r.plays | 0, extra: r.extra || {}, price: r.price == null ? null : Number(r.price),
   createdAt: Number(r.created_at), updatedAt: Number(r.updated_at), doneAt: r.done_at == null ? null : Number(r.done_at) });
 const photoPath = url => { const m = String(url || '').match(/\/storage\/v1\/object\/public\/photos\/(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
 
@@ -289,6 +289,7 @@ function openSheet(id){
       <div class="field"><label for="fGenre">Genre</label><select id="fGenre"><option value="">À classer</option>${Object.entries(GENRES).map(([k, l]) => `<option value="${k}"${it.genre === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
     </div>
     <p class="sub publine" id="fPub"></p>
+    <div class="field" id="fPriceRow"><label for="fPrice">Prix payé (€)</label><input id="fPrice" type="text" inputmode="decimal" autocomplete="off" placeholder="—" value="${it.price != null ? String(it.price).replace('.', ',') : ''}"></div>
     <div class="field"><span class="flabel" id="lType">Type</span>
       <div class="chips" role="group" aria-labelledby="lType" id="fType">${T.map(k => `<button type="button" class="chip" data-type="${k}" aria-pressed="${it.type === k}">${TYPES[k].label}</button>`).join('')}</div></div>
     <div class="field"><label for="fNote">Note</label><textarea id="fNote" rows="2" placeholder="Conseillé par…, prix vu, édition…">${esc(it.note)}</textarea></div>
@@ -339,6 +340,7 @@ function refreshSheet(){
       + (fromWeb ? ' <button type="button" class="link" data-act="uncover" style="padding:4px 0">Pas la bonne ? Retirer</button>' : '');
   document.querySelectorAll('#fType .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === it.type)));
   $('fBookRow').hidden = !isBook(it);
+  $('fPriceRow').hidden = !it.owned;
   const pub = [it.pubYear && `Paru en ${it.pubYear}`, it.publisher].filter(Boolean).join(' · ');
   $('fPub').textContent = pub; $('fPub').hidden = !pub || !isBook(it);
   const chev = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
@@ -366,14 +368,15 @@ function formPatch(){
   const pg = parseInt($('fPages').value, 10);
   return { title: $('fTitle').value.trim().slice(0, 200), creator: $('fCreator').value.trim().slice(0, 200),
     detail: $('fDetail').value.trim().slice(0, 80), note: $('fNote').value.slice(0, 2000),
-    pages: pg > 0 && pg <= 20000 ? pg : null, genre: GENRES[$('fGenre').value] ? $('fGenre').value : null };
+    pages: pg > 0 && pg <= 20000 ? pg : null, genre: GENRES[$('fGenre').value] ? $('fGenre').value : null,
+    price: (() => { const v = parseFloat(String($('fPrice').value).replace(/\s|€/g, '').replace(',', '.')); return v >= 0 && v <= 100000 ? Math.round(v * 100) / 100 : null; })() };
 }
 function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 600); }
 function flushSave(){
   clearTimeout(saveTimer); saveTimer = null;
   const it = state.openId && find(state.openId); if (!it || !$('fTitle')) return;
   const p = formPatch();
-  if (['title','creator','detail','note','pages','genre'].every(k => String(it[k] ?? '') === String(p[k] ?? ''))) return;
+  if (['title','creator','detail','note','pages','genre','price'].every(k => String(it[k] ?? '') === String(p[k] ?? ''))) return;
   const next = {...it, ...p, updatedAt: Date.now()};
   Object.assign(it, p);
   put(it.id, next);
@@ -655,49 +658,130 @@ async function fillDetails(){
 const MOIS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 const plur = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const fmtNum = n => Math.round(n).toLocaleString('fr-FR');
-/* Collection section: what I own today, Lego status and pieces, games played, additions this year. */
-function collectionStats(){
+/* ---------- Stats: 4 tiles on top, the chosen one's details below ---------- */
+const euros = n => n.toLocaleString('fr-FR', {style: 'currency', currency: 'EUR', maximumFractionDigits: n < 100 ? 2 : 0});
+const lenTxt = cm => cm >= 100000 ? `${(cm / 100000).toLocaleString('fr-FR', {maximumFractionDigits: 2})} km` : cm >= 100 ? `${(cm / 100).toLocaleString('fr-FR', {maximumFractionDigits: cm >= 1000 ? 0 : 1})} m` : `${Math.round(cm)} cm`;
+const kgTxt = g => g >= 1000 ? `${(g / 1000).toLocaleString('fr-FR', {maximumFractionDigits: 1})} kg` : `${Math.round(g)} g`;
+function playersRange(p){
+  const t = String(p || '').toLowerCase();
+  if (/solo/.test(t)) return [1, 1];
+  if (/duo/.test(t)) return [2, 2];
+  const n = (t.match(/\d+/g) || []).map(Number);
+  return n.length ? [Math.min(...n), Math.max(...n)] : null;
+}
+const firstNum = v => { const m = String(v || '').match(/\d+/); return m ? +m[0] : null; };
+const openLink = it => `<button type="button" class="link inl" data-open="${esc(it.id)}">${esc(titleOf(it))}</button>`;
+const factList = rows => `<ul class="colstats">${rows.filter(Boolean).map(([k, v]) => `<li><strong>${k}</strong><span>${v}</span></li>`).join('')}</ul>`;
+function priceLine(list){
+  const priced = list.filter(i => i.price != null);
+  if (!priced.length) return ['Prix payé', 'Renseigne « Prix payé » dans les fiches pour voir le total.'];
+  const sum = priced.reduce((t, i) => t + i.price, 0);
+  return ['Prix payé', `${euros(sum)}${priced.length < list.length ? ` (${priced.length} sur ${list.length} renseignés)` : ''}`];
+}
+function collectionDetail(){
   const owned = state.items.filter(i => i.owned);
-  if (!owned.length) return `<h2 class="stat-h">Ma collection</h2><div class="empty"><strong>Collection vide</strong>Ajoute tes Lego, jeux, livres ou objets avec le bouton +, ou touche « Je l’ai » sur une envie.</div>`;
-  const by = k => owned.filter(i => i.type === k);
-  const lego = by('lego'), jeux = by('jeu'), books = owned.filter(isBook), objets = by('objet');
-  const pieces = lego.reduce((t, i) => t + ((i.extra && i.extra.pieces) || 0), 0);
-  const cond = k => lego.filter(i => i.cond === k).length;
-  const plays = jeux.reduce((t, i) => t + (i.plays || 0), 0);
-  const top = jeux.filter(i => i.plays).sort((a, b) => b.plays - a.plays).slice(0, 3);
+  if (!owned.length) return `<div class="empty"><strong>Collection vide</strong>Ajoute tes Lego, jeux, livres ou objets avec le bouton +, ou touche « Je l’ai » sur une envie.</div>`;
+  const n = k => owned.filter(i => k === 'book' ? isBook(i) : i.type === k).length;
   const year = new Date().getFullYear();
   const added = owned.filter(i => i.ownedAt && new Date(i.ownedAt).getFullYear() === year).length;
-  const read = books.filter(i => i.status === 'termine').length;
-  const tile = (n, label, type) => `<div class="tile"><b>${fmtNum(n)}</b><span>${type ? `<i class="sw" style="--c:${TYPES[type].c}"></i>` : ''}${label}</span></div>`;
-  const lines = [
-    lego.length && `<li><strong>Lego</strong><span>${[cond('construit') && `${cond('construit')} construit${cond('construit') > 1 ? 's' : ''}`, cond('boite') && `${cond('boite')} en boîte`, cond('demonte') && `${cond('demonte')} démonté${cond('demonte') > 1 ? 's' : ''}`, pieces && `${fmtNum(pieces)} pièces`].filter(Boolean).join(' · ') || 'État à renseigner dans les fiches'}</span></li>`,
-    jeux.length && `<li><strong>Jeux</strong><span>${plays ? `${plays} partie${plays > 1 ? 's' : ''} jouée${plays > 1 ? 's' : ''}` : 'Aucune partie notée'}${top.length ? ` · ${top.map(i => `<button type="button" class="link inl" data-open="${esc(i.id)}">${esc(titleOf(i))}</button> (${i.plays})`).join(', ')}` : ''}</span></li>`,
-    books.length && `<li><strong>Livres et BD</strong><span>${read} lu${read > 1 ? 's' : ''} · ${books.length - read} à lire${books.some(i => i.format === 'numerique') ? ` · ${books.filter(i => i.format === 'numerique').length} numérique${books.filter(i => i.format === 'numerique').length > 1 ? 's' : ''}` : ''}</span></li>`,
-    added && `<li><strong>${year}</strong><span>${added} ajout${added > 1 ? 's' : ''} à la collection</span></li>`
-  ].filter(Boolean).join('');
-  return `<h2 class="stat-h">Ma collection</h2><div style="display:flex;flex-direction:column;gap:12px;margin-bottom:8px">
-    <div class="tiles">${tile(lego.length, 'Lego', 'lego')}${tile(jeux.length, jeux.length > 1 ? 'jeux' : 'jeu', 'jeu')}${tile(books.length, 'livres et BD', 'livre')}</div>
-    ${objets.length ? `<p class="chart-note">et ${objets.length} objet${objets.length > 1 ? 's' : ''}</p>` : ''}
-    ${lines ? `<ul class="colstats">${lines}</ul>` : ''}
-  </div>`;
+  const wishes = state.items.filter(i => !i.owned && i.status === 'pile').length, gifts = state.items.filter(i => !i.owned && i.status === 'cadeau').length;
+  const gone = state.items.filter(i => i.status === 'parti').length;
+  const types = [['lego', 'Lego'], ['jeu', 'Jeux'], ['book', 'Livres et BD'], ['objet', 'Objets']].filter(([k]) => n(k));
+  const max = Math.max(...types.map(([k]) => n(k)));
+  return `<div class="chart"><div class="top"><h2>Par type</h2><span class="sub">${owned.length} au total</span></div>
+      <ul class="genres">${types.map(([k, l]) => `<li><span class="gl">${l}</span><span class="gb"><i style="width:${(n(k) / max * 100).toFixed(1)}%;background:${k === 'book' ? TYPES.livre.c : TYPES[k].c}"></i></span><span class="gn">${n(k)}</span></li>`).join('')}</ul></div>
+    ${factList([
+      ['En ' + year, added ? `${added} ajout${added > 1 ? 's' : ''} à la collection` : 'Aucun ajout pour l’instant'],
+      priceLine(owned),
+      ['Envies', `${wishes} à acheter · ${gifts} dans la liste cadeaux`],
+      gone && ['Plus à moi', `${gone} vendu${gone > 1 ? 's' : ''} ou donné${gone > 1 ? 's' : ''}`]
+    ])}`;
+}
+// Fun facts use a classic 2×4 brick: 31.8 mm long, 9.6 mm high, about 2.32 g.
+function legoDetail(){
+  const lego = state.items.filter(i => i.owned && i.type === 'lego');
+  if (!lego.length) return `<div class="empty"><strong>Aucun Lego dans ta collection</strong>Ajoute-les depuis + › Catalogue Lego : un toucher sur « Je l’ai » suffit.</div>`;
+  const withP = lego.filter(i => i.extra && i.extra.pieces), pieces = withP.reduce((t, i) => t + i.extra.pieces, 0);
+  const cond = k => lego.filter(i => i.cond === k).length;
+  const biggest = withP.reduce((a, i) => !a || i.extra.pieces > a.extra.pieces ? i : a, null);
+  const yr = i => (i.extra && i.extra.year) || i.pubYear;
+  const oldest = lego.filter(yr).reduce((a, i) => !a || yr(i) < yr(a) ? i : a, null);
+  const themes = {}; lego.forEach(i => { const t = i.extra && i.extra.theme; if (t) themes[t] = (themes[t] || 0) + 1; });
+  const topThemes = Object.entries(themes).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const priced = lego.filter(i => i.price != null && i.extra && i.extra.pieces);
+  const perPiece = priced.length ? priced.reduce((t, i) => t + i.price, 0) / priced.reduce((t, i) => t + i.extra.pieces, 0) : null;
+  const lengthCm = pieces * 3.18, heightCm = pieces * 0.96, grams = pieces * 2.32;
+  const fun = pieces ? `<div class="fun">
+      <div class="fun-card"><b>${kgTxt(grams)}</b><span>de plastique sur tes étagères</span></div>
+      <div class="fun-card"><b>${lenTxt(lengthCm)}</b><span>bout à bout${lengthCm >= 10500 ? `, soit ${(lengthCm / 10500).toLocaleString('fr-FR', {maximumFractionDigits: 1})} terrains de foot` : ''}</span></div>
+      <div class="fun-card"><b>${lenTxt(heightCm)}</b><span>empilées${heightCm >= 3300 ? `, ${Math.round(heightCm / 33000 * 100)} % de la tour Eiffel` : ''}</span></div>
+    </div>
+    <p class="chart-note">Estimations faites comme si chaque pièce était une brique 2×4 (3,18 cm de long, 0,96 cm de haut, 2,32 g).</p>` : '';
+  return `${fun}${factList([
+      ['Pièces', pieces ? `${fmtNum(pieces)} au total${withP.length < lego.length ? ` (${withP.length} sets sur ${lego.length} connus)` : ''}` : 'Ajoute les n° de set pour compter les pièces'],
+      ['État', [cond('construit') && `${cond('construit')} construit${cond('construit') > 1 ? 's' : ''}`, cond('boite') && `${cond('boite')} en boîte`, cond('demonte') && `${cond('demonte')} démonté${cond('demonte') > 1 ? 's' : ''}`].filter(Boolean).join(' · ') || 'À renseigner dans les fiches'],
+      biggest && ['Le plus gros', `${openLink(biggest)} (${fmtNum(biggest.extra.pieces)} pièces)`],
+      oldest && ['Le plus ancien', `${openLink(oldest)} (${yr(oldest)})`],
+      topThemes.length && ['Thèmes', topThemes.map(([t, c]) => `${esc(t)} (${c})`).join(', ')],
+      priceLine(lego),
+      perPiece != null && ['Prix par pièce', `${perPiece.toLocaleString('fr-FR', {maximumFractionDigits: 3})} € en moyenne`]
+    ])}`;
+}
+function gamesDetail(){
+  const jeux = state.items.filter(i => i.owned && i.type === 'jeu');
+  if (!jeux.length) return `<div class="empty"><strong>Aucun jeu dans ta collection</strong>Importe ta ludothèque Myludo depuis l’onglet Collection, ou ajoute un jeu avec le bouton +.</div>`;
+  const ext = jeux.filter(i => /^extension/i.test(i.detail || '') || (i.extra && i.extra.kind === 'extension'));
+  const base = jeux.filter(i => !ext.includes(i));
+  const plays = jeux.reduce((t, i) => t + (i.plays || 0), 0);
+  const never = base.filter(i => !i.plays).length;
+  const top = jeux.filter(i => i.plays).sort((a, b) => b.plays - a.plays).slice(0, 5);
+  const ranges = base.map(i => playersRange(i.extra && i.extra.players)).filter(Boolean);
+  const fits = k => ranges.filter(([a, b]) => a <= k && k <= b).length;
+  const big = ranges.filter(([, b]) => b >= 6).length;
+  const times = base.map(i => firstNum(i.extra && i.extra.time)).filter(Boolean);
+  const longest = base.filter(i => firstNum(i.extra && i.extra.time)).reduce((a, i) => !a || firstNum(i.extra.time) > firstNum(a.extra.time) ? i : a, null);
+  return factList([
+      ['Jeux', `${base.length} jeu${base.length > 1 ? 'x' : ''}${ext.length ? ` + ${ext.length} extension${ext.length > 1 ? 's' : ''}` : ''}`],
+      ['Parties', plays ? `${fmtNum(plays)} partie${plays > 1 ? 's' : ''} notée${plays > 1 ? 's' : ''}` : 'Note tes parties avec le compteur dans la fiche'],
+      top.length && ['Les plus joués', top.map(i => `${openLink(i)} (${i.plays})`).join(', ')],
+      ['Jamais joués', never ? `${never} jeu${never > 1 ? 'x' : ''}, ta pile de la honte` : 'Aucun, bravo !'],
+      ranges.length && ['À combien', `${fits(1)} jouables seul · ${fits(2)} à deux · ${big} pour 6 et plus`],
+      times.length && ['Durée', `${Math.round(times.reduce((t, x) => t + x, 0) / times.length)} min en moyenne${longest ? ` · le plus long : ${openLink(longest)} (${esc(longest.extra.time)} min)` : ''}`],
+      priceLine(jeux)
+    ]);
+}
+function renderStats(){
+  $('statYears').hidden = true;
+  const body = $('statBody');
+  if (!state.ready) { body.innerHTML = '<p class="sub">Chargement…</p>'; return; }
+  const tab = ['collection', 'lego', 'jeux', 'lectures'].includes(state.statTab) ? state.statTab : 'collection';
+  const owned = state.items.filter(i => i.owned), year = new Date().getFullYear();
+  const lego = owned.filter(i => i.type === 'lego'), jeux = owned.filter(i => i.type === 'jeu');
+  const pieces = lego.reduce((t, i) => t + ((i.extra && i.extra.pieces) || 0), 0);
+  const plays = jeux.reduce((t, i) => t + (i.plays || 0), 0);
+  const readYear = state.items.filter(i => i.status === 'termine' && isBook(i) && new Date(i.doneAt || i.updatedAt || 0).getFullYear() === year).length;
+  const tiles = [
+    ['collection', owned.length, 'Collection', 'var(--c-objet)', `${owned.filter(i => i.ownedAt && new Date(i.ownedAt).getFullYear() === year).length} en ${year}`],
+    ['lego', lego.length, 'Lego', TYPES.lego.c, pieces ? `${compact(pieces)} pièces` : 'sets'],
+    ['jeux', jeux.length, 'Jeux', TYPES.jeu.c, `${compact(plays)} partie${plays > 1 ? 's' : ''}`],
+    ['lectures', readYear, 'Lectures', TYPES.livre.c, `en ${year}`]
+  ];
+  const detail = tab === 'lego' ? legoDetail() : tab === 'jeux' ? gamesDetail() : tab === 'lectures' ? readingStats() : collectionDetail();
+  body.innerHTML = `<div class="stab" role="tablist" aria-label="Statistiques">${tiles.map(([k, n, l, c, sub]) => `<button type="button" role="tab" id="stab-${k}" class="stile" data-stab="${k}" aria-selected="${tab === k}" aria-controls="stPanel" style="--c:${c}"><b>${fmtNum(n)}</b><span class="sl">${l}</span><span class="ss">${sub}</span></button>`).join('')}</div>
+    <div class="stat-detail" id="stPanel" role="tabpanel" aria-labelledby="stab-${tab}">${detail}</div>`;
 }
 const compact = n => n >= 1000 ? (n / 1000).toLocaleString('fr-FR', {maximumFractionDigits: 1}) + 'k' : String(n);
-function renderStats(){
+function readingStats(){
   const when = i => new Date(i.doneAt || i.updatedAt || 0);
   const reads = state.items.filter(i => i.status === 'termine' && isBook(i));
   const now = new Date(), cur = now.getFullYear();
   const years = [...new Set(reads.map(i => when(i).getFullYear()).concat(cur))].sort((a, b) => b - a);
   if (!years.includes(state.statYear)) state.statYear = cur;
   const y = state.statYear, mode = state.statMode === 'pages' ? 'pages' : 'count';
-  $('statYears').hidden = true;
   const yearChips = years.length > 1 ? `<div class="chips" role="group" aria-label="Année des lectures">${years.map(yy => `<button type="button" class="chip" data-syear="${yy}" aria-pressed="${yy === y}">${yy}</button>`).join('')}</div>` : '';
-  const body = $('statBody');
-  if (!state.ready) { body.innerHTML = '<p class="sub">Chargement…</p>'; return; }
-  const colHtml = collectionStats();
   const list = reads.filter(i => when(i).getFullYear() === y).sort((a, b) => when(a) - when(b));
   if (!list.length) {
-    body.innerHTML = colHtml + `<h2 class="stat-h">Lectures ${y}</h2>${yearChips}<div class="empty"><strong>Aucune lecture terminée en ${y}</strong>Range un livre ou une BD dans « Terminé » depuis sa fiche, ou importe tes lectures Goodreads depuis l’onglet Lectures.</div>`;
-    return;
+    return `<h2 class="stat-h">Lectures ${y}</h2>${yearChips}<div class="empty"><strong>Aucune lecture terminée en ${y}</strong>Range un livre ou une BD dans « Terminé » depuis sa fiche, ou importe tes lectures Goodreads depuis l’onglet Lectures.</div>`;
   }
   const val = i => mode === 'pages' ? (i.pages || 0) : 1;
   const m = Array.from({length: 12}, () => ({livre: [], bd: []}));
@@ -721,7 +805,7 @@ function renderStats(){
   const gc = {}; list.forEach(i => { const g = i.genre || ''; gc[g] = (gc[g] || 0) + 1; });
   const grows = Object.entries(gc).sort((a, b) => (a[0] === '') - (b[0] === '') || b[1] - a[1]);
   const gmax = Math.max(...grows.map(r => r[1]));
-  body.innerHTML = colHtml + `<h2 class="stat-h">Lectures ${y}</h2>${yearChips}<div style="display:flex;flex-direction:column;gap:16px;margin-top:12px">
+  return `<h2 class="stat-h">Lectures ${y}</h2>${yearChips}<div style="display:flex;flex-direction:column;gap:16px;margin-top:12px">
     <div class="tiles">
       <div class="tile"><b>${list.length}</b><span>${list.length > 1 ? 'lectures' : 'lecture'}</span></div>
       <div class="tile"><b>${nl}</b><span><i class="sw" style="--c:${TYPES.livre.c}"></i>${nl > 1 ? 'livres' : 'livre'}</span></div>
@@ -970,6 +1054,7 @@ document.addEventListener('click', e => {
   if (t.dataset.shelf) { state.shelf = t.dataset.shelf; renderShelf(); return; }
   if (t.dataset.syear) { state.statYear = +t.dataset.syear; renderStats(); return; }
   if (t.dataset.smode) { state.statMode = t.dataset.smode; renderStats(); return; }
+  if (t.dataset.stab) { state.statTab = t.dataset.stab; renderStats(); return; }
   if (t.dataset.smonth) { const el = $('sm-' + t.dataset.smonth); if (el) el.scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start'}); return; }
   if (t.dataset.type && state.openId) { save(state.openId, {type: t.dataset.type}); renderAll(); return; }
   if (t.dataset.move && state.openId) { move(state.openId, t.dataset.move); return; }
@@ -1010,7 +1095,7 @@ $('q').oninput = e => { state.q = e.target.value; renderPile(); };
 $('cq').oninput = e => { state.cq = e.target.value; renderCollection(); };
 $('sheetWrap').addEventListener('click', e => { if (e.target === $('sheetWrap')) closeSheet(); });
 $('sheet').addEventListener('change', e => { if (e.target.id === 'fDetail' && state.openId) { const it = find(state.openId); if (it && it.type === 'lego') { flushSave(); legoEnrich(state.openId); } } });
-$('sheet').addEventListener('input', e => { if (['fTitle','fCreator','fDetail','fNote','fPages','fGenre'].includes(e.target.id)) { scheduleSave(); $('sheetTitle').textContent = $('fTitle').value.trim() || 'Nouvelle envie'; $('sCreator').textContent = $('fCreator').value; } });
+$('sheet').addEventListener('input', e => { if (['fTitle','fCreator','fDetail','fNote','fPages','fGenre','fPrice'].includes(e.target.id)) { scheduleSave(); $('sheetTitle').textContent = $('fTitle').value.trim() || 'Nouvelle envie'; $('sCreator').textContent = $('fCreator').value; } });
 $('sheet').addEventListener('click', e => { if (e.target.closest('#sClose')) closeSheet(); if (e.target.closest('#sPhoto')) { flushSave(); state.camTarget = state.openId; $('lib').click(); } });
 let lbReturn = null;
 function openPhoto(src, from){ lbReturn = from || null; const big = RB_THUMB.exec(src || ''); $('lbImg').src = big ? `${big[1]}/1000x800p.jpg` : src; $('lightbox').hidden = false; $('lbClose').focus({preventScroll: true}); }

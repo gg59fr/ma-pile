@@ -28,6 +28,7 @@ create table if not exists public.items (
   cond        text check (cond is null or cond in ('boite', 'construit', 'demonte')),
   plays       integer not null default 0 check (plays between 0 and 100000),
   extra       jsonb not null default '{}'::jsonb,
+  price       numeric(10,2) check (price is null or (price >= 0 and price <= 100000)),
   created_at  bigint not null default (extract(epoch from now()) * 1000)::bigint,
   updated_at  bigint not null default (extract(epoch from now()) * 1000)::bigint,
   done_at     bigint
