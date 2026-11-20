@@ -53,10 +53,14 @@ function pick(hits: Hit[], title: string, year: number | null, expansion: boolea
   // BGG lists a game once per type; the same id can come back twice.
   c = c.filter((h, i) => c.findIndex(x => x.id === h.id) === i);
   if (c.length === 1) return c[0];
-  if (!year) { if (tie) tie.push(...c); return null; }   // several games share the name: decided by popularity in find()
-  const dist = (h: Hit) => h.year == null ? 99 : (h.year <= year ? year - h.year : (h.year - year) * 2);
-  c.sort((a, b) => dist(a) - dist(b));
-  return dist(c[0]) < dist(c[1]) && dist(c[0]) <= 6 ? c[0] : null;
+  if (year) {
+    const dist = (h: Hit) => h.year == null ? 99 : (h.year <= year ? year - h.year : (h.year - year) * 2);
+    c.sort((a, b) => dist(a) - dist(b));
+    if (dist(c[0]) < dist(c[1]) && dist(c[0]) <= 6) return c[0];
+  }
+  // Still several games of that name (the year is often the French edition's): decided by popularity in find().
+  if (tie) tie.push(...c);
+  return null;
 }
 async function find(title: string, year: number | null, expansion: boolean): Promise<Hit | null> {
   const tries = [title, title.split(/\s+[:\-–]\s+/)[0]].filter((t, i, a) => t && a.indexOf(t) === i);
@@ -65,12 +69,17 @@ async function find(title: string, year: number | null, expansion: boolean): Pro
     const hit = pick(await search(t, true), t, year, expansion, tie) || await popular(tie);
     if (hit) return hit;
   }
-  // Last try: a single BGG game whose name starts with the short title ("Dorfromantik" → "Dorfromantik: The Board Game").
+  // Last try on a broad search: same name once accents are ignored ("Honshu" → "Honshū"),
+  // else a single game whose name starts with the short title ("Dorfromantik" → "Dorfromantik: The Board Game").
   const short = norm(tries[tries.length - 1]);
-  if (short.length >= 5) {
-    const c = (await search(tries[tries.length - 1], false)).filter(h => norm(h.name).startsWith(short + ' ') && (h.type === 'boardgameexpansion') === expansion);
-    const ids = [...new Set(c.map(h => h.id))];
-    if (ids.length === 1) return c[0];
+  if (short.length >= 4) {
+    const all = (await search(tries[tries.length - 1], false)).filter(h => (h.type === 'boardgameexpansion') === expansion);
+    const uniq = (l: Hit[]) => l.filter((h, i) => l.findIndex(x => x.id === h.id) === i);
+    const same = uniq(all.filter(h => norm(h.name) === short));
+    if (same.length === 1) return same[0];
+    if (same.length > 1) return await popular(same);
+    const pre = uniq(all.filter(h => norm(h.name).startsWith(short + ' ')));
+    if (pre.length === 1) return pre[0];
   }
   return null;
 }
