@@ -3,6 +3,7 @@
 //
 //   POST {title, year?, expansion?}   signed-in user → best BGG match (image, players, time)
 //   POST {mode: 'search', q}          signed-in user → up to 10 BGG games for a typed name, with full details
+//   POST {mode: 'refresh'}            games already linked to BGG: adds designers and age where missing (20 per call)
 //   POST {mode: 'backfill', limit?}   signed-in user → fills that user's games without an image;
 //                                     x-admin-key header (private.settings 'admin_key') → the owner's games
 //
@@ -127,6 +128,31 @@ Deno.serve(async (req) => {
       // Keep the name that matched the search (often the French title), BGG's main name as a hint.
       return json({ results: hits.map(h => ({ ...info.get(h.id), name: h.name, mainName: info.get(h.id)?.name || h.name, year: h.year ?? info.get(h.id)?.year ?? null })).filter(r => r.bgg) });
     }
+    if (body.mode === 'refresh') {
+      const { data: games, error } = await admin.from('items').select('id,creator,pub_year,extra')
+        .eq('user_id', uid).eq('type', 'jeu').not('extra->bgg', 'is', null).is('extra->bgg_info', null).order('created_at').limit(20);
+      if (error) throw error;
+      const info = await things([...new Set((games || []).map(g => String(g.extra.bgg)))]);
+      let updated = 0;
+      for (const g of games || []) {
+        const t = info.get(String(g.extra.bgg));
+        const extra = { ...g.extra, bgg_info: true };
+        const patch: Record<string, unknown> = { extra, updated_at: Date.now() };
+        if (t) {
+          if (!extra.age && t.age) extra.age = t.age;
+          if (!extra.players && t.players) extra.players = t.players;
+          if (!extra.time && t.time) extra.time = String(t.time);
+          if (!extra.bigImg && t.image) extra.bigImg = t.image;
+          if (!g.creator && (t.designers as string[])?.length) patch.creator = (t.designers as string[]).slice(0, 2).join(', ');
+          if (!g.pub_year && t.year) patch.pub_year = t.year;
+        }
+        const { error: e } = await admin.from('items').update(patch).eq('id', g.id);
+        if (!e && t) updated++;
+      }
+      const { count } = await admin.from('items').select('id', { count: 'exact', head: true })
+        .eq('user_id', uid).eq('type', 'jeu').not('extra->bgg', 'is', null).is('extra->bgg_info', null);
+      return json({ done: (games || []).length, updated, remaining: count ?? 0 });
+    }
     if (body.mode !== 'backfill') {
       const title = String(body.title || '').trim();
       if (!title) return json({ error: 'title_required' }, 400);
@@ -149,7 +175,7 @@ Deno.serve(async (req) => {
     let filled = 0;
     for (const { item, id } of matched) {
       const t = info.get(id); if (!t) { missed.push(item.title); continue; }
-      const extra = { ...(item.extra || {}), bgg: t.bgg, bigImg: t.image || undefined };
+      const extra = { ...(item.extra || {}), bgg: t.bgg, bigImg: t.image || undefined, bgg_info: true };
       if (!extra.players && t.players) extra.players = t.players;
       if (!extra.time && t.time) extra.time = String(t.time);
       if (!extra.age && t.age) extra.age = t.age;

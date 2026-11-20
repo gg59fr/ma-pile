@@ -654,7 +654,7 @@ async function gameEnrich(id, force){
   const cur = find(id); if (!cur) return null;
   if (!r || r.error) { delete state.coverTried[id]; state.idNote[id] = 'BoardGameGeek ne répond pas. Réessaie plus tard.'; renderAll(); return null; }
   if (!r.found) { save(id, { extra: { ...(cur.extra || {}), bgg_none: true } }); state.idNote[id] = 'Pas trouvé sur BoardGameGeek avec ce titre exact. Corrige le titre ou ajoute une photo.'; renderAll(); return null; }
-  const extra = { ...(cur.extra || {}), bgg: r.bgg, bigImg: r.image || undefined }; delete extra.bgg_none;
+  const extra = { ...(cur.extra || {}), bgg: r.bgg, bgg_info: true, bigImg: r.image || undefined }; delete extra.bgg_none;
   if (!extra.players && r.players) extra.players = r.players;
   if (!extra.time && r.time) extra.time = String(r.time);
   if (!extra.age && r.age) extra.age = r.age;
@@ -1477,7 +1477,7 @@ const gs = { q: '', rows: [], seq: 0, timer: null, err: '' };
 const gameFields = g => ({
   title: g.name, creator: (g.designers || []).slice(0, 2).join(', '), detail: g.expansion ? 'Extension' : '',
   photo: g.thumb || null, coverFrom: g.thumb ? 'bgg' : null, pubYear: g.year || null,
-  extra: { bgg: g.bgg, bigImg: g.image || undefined, players: g.players || undefined, time: g.time ? String(g.time) : undefined, age: g.age || undefined }
+  extra: { bgg: g.bgg, bgg_info: true, bigImg: g.image || undefined, players: g.players || undefined, time: g.time ? String(g.time) : undefined, age: g.age || undefined }
 });
 function openGameSearch(){
   if (!sb) return;
