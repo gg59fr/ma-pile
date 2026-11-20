@@ -70,30 +70,46 @@ async function find(title: string, year: number | null, expansion: boolean): Pro
     const hit = pick(await search(t, true), t, year, expansion, tie) || await popular(tie);
     if (hit) return hit;
   }
-  // Last try on a broad search: same name once accents are ignored ("Honshu" → "Honshū"),
-  // else a single game whose name starts with the short title ("Dorfromantik" → "Dorfromantik: The Board Game").
-  const short = norm(tries[tries.length - 1]);
-  if (short.length >= 4) {
-    const all = (await search(tries[tries.length - 1], false)).filter(h => (h.type === 'boardgameexpansion') === expansion);
-    const uniq = (l: Hit[]) => l.filter((h, i) => l.findIndex(x => x.id === h.id) === i);
-    const same = uniq(all.filter(h => norm(h.name) === short));
-    if (same.length === 1) return same[0];
-    if (same.length > 1) return await popular(same);
-    const pre = uniq(all.filter(h => norm(h.name).startsWith(short + ' ')));
-    if (pre.length === 1) return pre[0];
+  // Broad searches. BGG's exact search is strict about punctuation ("Undo - Prisonnier du Passé" vs
+  // "Undo: Prisonnier du Passé") and accents ("Honshu" vs "Honshū"), so we search on the longest part
+  // of the title and compare names once punctuation and accents are ignored.
+  const uniq = (l: Hit[]) => l.filter((h, i) => l.findIndex(x => x.id === h.id) === i);
+  const full = norm(title), parts = title.split(/\s*[:\-–]\s+|\s+[:\-–]\s*/).map(p => p.trim()).filter(p => norm(p).length >= 4);
+  const longest = parts.sort((a, b) => b.length - a.length)[0];
+  const shortT = tries[tries.length - 1], short = norm(shortT);
+  for (const q of [...new Set([longest, shortT].filter(Boolean))]) {
+    const all = (await search(q, false)).filter(h => (h.type === 'boardgameexpansion') === expansion);
+    for (const want of [...new Set([full, short])]) {
+      if (want.length < 4) continue;
+      const same = uniq(all.filter(h => norm(h.name) === want));
+      if (same.length === 1) return same[0];
+      if (same.length > 1) { const p = await popular(same); if (p) return p; }
+    }
+    if (q === shortT && short.length >= 4) {
+      // A name that only starts with the short title ("Mindbug" → "Mindbug: First Contact"): the clearly most rated one.
+      const pre = uniq(all.filter(h => norm(h.name).startsWith(short + ' ')));
+      if (pre.length === 1) return pre[0];
+      if (pre.length > 1) { const p = await popular(pre, 4); if (p) return p; }
+    }
   }
   return null;
 }
 // Same name, no year to tell them apart: take the game far more rated on BGG than the others
 // (the well-known edition rather than a namesake), otherwise leave it undecided.
-async function popular(c: Hit[]): Promise<Hit | null> {
+async function ratings(ids: string[]): Promise<Map<string, number>> {
+  const n = new Map<string, number>();
+  for (let i = 0; i < ids.length; i += 20) {
+    const xml = await bgg(`thing?id=${ids.slice(i, i + 20).join(',')}&stats=1`);
+    for (const m of xml.matchAll(/<item type="[^"]+" id="(\d+)">([\s\S]*?)<\/item>/g)) n.set(m[1], +attr(m[2], 'usersrated') || 0);
+  }
+  return n;
+}
+async function popular(c: Hit[], factor = 5): Promise<Hit | null> {
   if (c.length < 2) return null;
-  const ids = c.slice(0, 20).map(h => h.id);
-  const xml = await bgg(`thing?id=${ids.join(',')}&stats=1`);
-  const n = new Map([...xml.matchAll(/<item type="[^"]+" id="(\d+)">([\s\S]*?)<\/item>/g)].map(m => [m[1], +attr(m[2], 'usersrated') || 0]));
-  const ranked = c.slice(0, 20).sort((a, b) => (n.get(b.id) || 0) - (n.get(a.id) || 0));
+  const n = await ratings(c.slice(0, 40).map(h => h.id));
+  const ranked = c.slice(0, 40).sort((a, b) => (n.get(b.id) || 0) - (n.get(a.id) || 0));
   const top = n.get(ranked[0].id) || 0, next = n.get(ranked[1].id) || 0;
-  return top >= 20 && top >= next * 5 ? ranked[0] : null;
+  return top >= 20 && top >= next * factor ? ranked[0] : null;
 }
 // Game details. BGG's main picture is the original (often English, often old) box: we look through the
 // game's editions ("versions") for a French one with a picture, the closest to the year of the user's copy
@@ -165,8 +181,12 @@ Deno.serve(async (req) => {
       let hits = await search(q, false);
       if (!hits.length && q.includes(' ')) hits = await search(q.split(/\s+[:\-–]\s+/)[0], false);
       const seen = new Set<string>();
-      hits = hits.sort((a, b) => score(a) - score(b) || (a.type === 'boardgame' ? 0 : 1) - (b.type === 'boardgame' ? 0 : 1) || (b.year || 0) - (a.year || 0))
-        .filter(h => !seen.has(h.id) && seen.add(h.id)).slice(0, 8);
+      hits = hits.sort((a, b) => score(a) - score(b) || (a.type === 'boardgame' ? 0 : 1) - (b.type === 'boardgame' ? 0 : 1))
+        .filter(h => !seen.has(h.id) && seen.add(h.id)).slice(0, 40);
+      // Best matches first, and among them the games people actually play (the base game before its spin-offs).
+      const n = await ratings(hits.map(h => h.id));
+      const tier = (h: Hit) => Math.min(score(h), 1);
+      hits = hits.sort((a, b) => tier(a) - tier(b) || (a.type === 'boardgame' ? 0 : 1) - (b.type === 'boardgame' ? 0 : 1) || (n.get(b.id) || 0) - (n.get(a.id) || 0)).slice(0, 8);
       const info = await things(hits.map(h => h.id));
       // Keep the name that matched the search (often the French title), BGG's main name as a hint.
       return json({ results: hits.map(h => ({ ...info.get(h.id), name: h.name, mainName: info.get(h.id)?.name || h.name, year: info.get(h.id)?.frYear ?? h.year ?? info.get(h.id)?.year ?? null })).filter(r => r.bgg) });
