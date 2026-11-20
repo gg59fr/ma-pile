@@ -306,7 +306,7 @@ function closeSheet(){
   flushSave();
   const closed = state.openId;
   state.openId = null; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = '';
-  autoEnrich(closed); legoEnrich(closed);
+  autoEnrich(closed); legoEnrich(closed); gameEnrich(closed);
 }
 function refreshSheet(){
   const it = state.openId && find(state.openId);
@@ -332,11 +332,12 @@ function refreshSheet(){
   $('sExtra').hidden = !$('sExtra').innerHTML;
   $('sPhoto').textContent = shown ? 'Changer la photo' : 'Ajouter une photo';
   const busy = state.identifying.has(it.id) ? 'Envoi de la photo…' : state.coverBusy.has(it.id) ? 'Recherche de couverture…' : '';
-  const canCover = !shown && (it.type === 'livre' || it.type === 'bd');
+  const canCover = !shown && (it.type === 'livre' || it.type === 'bd' || it.type === 'jeu');
   const fromWeb = it.photo && it.coverFrom && it.coverFrom !== 'none';
   $('sId').innerHTML = busy ? `<span class="busy"><span class="spin"></span>${busy}</span>`
-    : esc(state.idNote[it.id] || (fromWeb ? `Image trouvée en ligne (${({googlebooks: 'Google Books', rebrickable: 'catalogue Rebrickable'})[it.coverFrom] || 'Open Library'}).` : ''))
-      + (canCover ? ' <button type="button" class="link" data-act="cover" style="padding:4px 0">Chercher une couverture</button>' : '')
+    : esc(state.idNote[it.id] || (fromWeb ? `Image trouvée en ligne (${({googlebooks: 'Google Books', rebrickable: 'catalogue Rebrickable', bgg: 'BoardGameGeek'})[it.coverFrom] || 'Open Library'}).` : ''))
+      + (it.coverFrom === 'bgg' && it.extra && it.extra.bgg ? ` <a class="link inl" href="https://boardgamegeek.com/boardgame/${+it.extra.bgg}" target="_blank" rel="noopener">Voir sur BoardGameGeek</a>` : '')
+      + (canCover ? ` <button type="button" class="link" data-act="cover" style="padding:4px 0">${it.type === 'jeu' ? 'Chercher une image' : 'Chercher une couverture'}</button>` : '')
       + (fromWeb ? ' <button type="button" class="link" data-act="uncover" style="padding:4px 0">Pas la bonne ? Retirer</button>' : '');
   document.querySelectorAll('#fType .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === it.type)));
   $('fBookRow').hidden = !isBook(it);
@@ -637,13 +638,56 @@ async function autoEnrich(id, force){
   renderAll();
   return patch;
 }
+/* Games: image, players and time from BoardGameGeek, through the bgg-game server function
+   (the BGG token stays on the server). Credit to BoardGameGeek is shown wherever its images appear. */
+async function gameEnrich(id, force){
+  const it = find(id);
+  if (!it || it.type !== 'jeu' || !sb || state.coverBusy.has(id)) return null;
+  if (it.photo || state.previews[id] || (!force && (it.coverFrom === 'none' || (it.extra && (it.extra.bgg || it.extra.bgg_none))))) return null;
+  const title = (it.title || '').trim(); if (title.length < 2) return null;
+  const key = 'bgg|' + normT(title);
+  if (!force && state.coverTried[id] === key) return null;
+  state.coverTried[id] = key; state.coverBusy.add(id); renderAll();
+  let r = null;
+  try { const { data } = await sb.functions.invoke('bgg-game', { body: { title, year: it.pubYear || null, expansion: /^extension/i.test(it.detail || '') } }); r = data; } catch (e) {}
+  state.coverBusy.delete(id);
+  const cur = find(id); if (!cur) return null;
+  if (!r || r.error) { delete state.coverTried[id]; state.idNote[id] = 'BoardGameGeek ne répond pas. Réessaie plus tard.'; renderAll(); return null; }
+  if (!r.found) { save(id, { extra: { ...(cur.extra || {}), bgg_none: true } }); state.idNote[id] = 'Pas trouvé sur BoardGameGeek avec ce titre exact. Corrige le titre ou ajoute une photo.'; renderAll(); return null; }
+  const extra = { ...(cur.extra || {}), bgg: r.bgg, bigImg: r.image || undefined }; delete extra.bgg_none;
+  if (!extra.players && r.players) extra.players = r.players;
+  if (!extra.time && r.time) extra.time = String(r.time);
+  const patch = { extra };
+  if (r.thumb && !cur.photo) { patch.photo = r.thumb; patch.coverFrom = 'bgg'; }
+  if (!cur.pubYear && r.year) patch.pubYear = r.year;
+  save(id, patch);
+  state.idNote[id] = `Trouvé sur BoardGameGeek : ${r.name}${r.year ? ` (${r.year})` : ''}.`;
+  renderAll();
+  return patch;
+}
+async function fillGames(msg){
+  let filled = 0, missed = [];
+  for (let round = 0; round < 40; round++) {
+    msg(`<span class="busy"><span class="spin"></span>Jeux : recherche sur BoardGameGeek… ${filled} image${filled > 1 ? 's' : ''} trouvée${filled > 1 ? 's' : ''}</span>`);
+    let r = null;
+    try { const { data } = await sb.functions.invoke('bgg-game', { body: { mode: 'backfill', limit: 10 } }); r = data; } catch (e) {}
+    if (!r || r.error) break;
+    filled += r.filled || 0; missed = missed.concat(r.missed || []);
+    if (!r.done || !r.remaining) break;
+  }
+  if (store) await store.reload().catch(() => {});
+  return { filled, missed };
+}
 let detailsRun = false;
 async function fillDetails(){
   const msg = t => { const m = $('accMsg'); if (m) m.innerHTML = t; };
   if (detailsRun) return;
+  detailsRun = true;
+  const games = state.items.some(i => i.type === 'jeu' && !i.photo && !(i.extra && (i.extra.bgg || i.extra.bgg_none))) ? await fillGames(msg) : null;
+  const gamesTxt = games ? ` Jeux : ${games.filled} image${games.filled > 1 ? 's' : ''} ajoutée${games.filled > 1 ? 's' : ''}${games.missed.length ? `, ${games.missed.length} non trouvé${games.missed.length > 1 ? 's' : ''}` : ''}.` : '';
   const todo = state.items.filter(i => isBook(i) && (i.title || '').trim() && ((!i.photo && i.coverFrom !== 'none') || !i.pages || !i.genre || !i.pubYear));
-  if (!todo.length) { msg('Tes livres et BD ont déjà couverture, pages, année et genre.'); return; }
-  detailsRun = true; let n = 0; const got = {photo: 0, pages: 0, genre: 0};
+  if (!todo.length) { detailsRun = false; msg(`Tes livres et BD ont déjà couverture, pages, année et genre.${gamesTxt}`); return; }
+  let n = 0; const got = {photo: 0, pages: 0, genre: 0};
   for (const it of todo) {
     msg(`<span class="busy"><span class="spin"></span>Recherche en ligne : ${n} / ${todo.length}</span>`);
     const p = await autoEnrich(it.id, true);
@@ -651,7 +695,7 @@ async function fillDetails(){
     n++; await new Promise(r => setTimeout(r, 300));
   }
   detailsRun = false;
-  msg(`<strong>${todo.length} fiche${todo.length > 1 ? 's' : ''} vérifiée${todo.length > 1 ? 's' : ''}</strong> : ${got.photo} couverture${got.photo > 1 ? 's' : ''}, ${got.pages} nombre${got.pages > 1 ? 's' : ''} de pages et ${got.genre} genre${got.genre > 1 ? 's' : ''} trouvés. Le reste se complète à la main dans la fiche.`);
+  msg(`<strong>${todo.length} fiche${todo.length > 1 ? 's' : ''} vérifiée${todo.length > 1 ? 's' : ''}</strong> : ${got.photo} couverture${got.photo > 1 ? 's' : ''}, ${got.pages} nombre${got.pages > 1 ? 's' : ''} de pages et ${got.genre} genre${got.genre > 1 ? 's' : ''} trouvés.${gamesTxt} Le reste se complète à la main dans la fiche.`);
 }
 
 /* ---------- stats ---------- */
@@ -748,7 +792,7 @@ function gamesDetail(){
       ranges.length && ['À combien', `${fits(1)} jouables seul · ${fits(2)} à deux · ${big} pour 6 et plus`],
       times.length && ['Durée', `${Math.round(times.reduce((t, x) => t + x, 0) / times.length)} min en moyenne${longest ? ` · le plus long : ${openLink(longest)} (${esc(longest.extra.time)} min)` : ''}`],
       priceLine(jeux)
-    ]);
+    ]) + (jeux.some(i => i.coverFrom === 'bgg') ? '<p class="chart-note">Images et infos des jeux : <a class="link inl" href="https://boardgamegeek.com" target="_blank" rel="noopener">Powered by BGG</a>.</p>' : '');
 }
 function renderStats(){
   $('statYears').hidden = true;
@@ -1061,11 +1105,16 @@ document.addEventListener('click', e => {
   const act = t.dataset.act;
   if (act === 'photo') { if (!store) return; setMenu(true); }
   else if (act === 'library') { state.camTarget = null; $('lib').click(); }
-  else if (act === 'zoom' && state.openId) { const it = find(state.openId); const src = it && (it.photo || state.previews[it.id]); if (src) openPhoto(src, t); }
+  else if (act === 'zoom' && state.openId) { const it = find(state.openId); const src = it && ((it.extra && it.extra.bigImg) || it.photo || state.previews[it.id]); if (src) openPhoto(src, t); }
   else if (act === 'close') closeSheet();
   else if (act === 'gone' && state.openId) { flushSave(); markGone(state.openId); }
-  else if (act === 'cover' && state.openId) { flushSave(); delete state.idNote[state.openId]; autoEnrich(state.openId, true); }
-  else if (act === 'uncover' && state.openId) { delete state.idNote[state.openId]; save(state.openId, {photo: null, coverFrom: 'none'}); renderAll(); toast('Couverture retirée. Tu peux ajouter une photo ou relancer la recherche.'); }
+  else if (act === 'cover' && state.openId) { flushSave(); delete state.idNote[state.openId]; const it = find(state.openId); if (it && it.type === 'jeu') gameEnrich(state.openId, true); else autoEnrich(state.openId, true); }
+  else if (act === 'uncover' && state.openId) {
+    const it = find(state.openId); const patch = {photo: null, coverFrom: 'none'};
+    if (it && it.extra && (it.extra.bgg || it.extra.bigImg)) { const extra = {...it.extra}; delete extra.bgg; delete extra.bigImg; patch.extra = extra; }
+    delete state.idNote[state.openId]; save(state.openId, patch); renderAll();
+    toast(it && it.type === 'jeu' ? 'Image retirée. Tu peux ajouter une photo ou corriger le titre puis relancer la recherche.' : 'Couverture retirée. Tu peux ajouter une photo ou relancer la recherche.');
+  }
   else if (act === 'del') { state.delArmed = true; refreshSheet(); }
   else if (act === 'del-no') { state.delArmed = false; refreshSheet(); }
   else if (act === 'del-yes') { const id = state.openId; clearTimeout(saveTimer); state.openId = null; $('sheetWrap').hidden = true; document.body.style.overflow = '';
@@ -1433,8 +1482,8 @@ function openAccount(){
       <div class="acts"><button type="button" class="btn" data-acc="export">Exporter mes fiches</button><button type="button" class="btn" data-acc="import">Importer une sauvegarde</button></div>
     </div>
     <div class="panel">
-      <h2>Infos des livres</h2>
-      <p class="sub">Cherche en ligne la couverture, le nombre de pages, l’année et le genre des livres et BD où ils manquent.</p>
+      <h2>Infos des livres et jeux</h2>
+      <p class="sub">Cherche en ligne ce qui manque : couverture, pages, année et genre des livres et BD, image des jeux (BoardGameGeek).</p>
       <div class="acts"><button type="button" class="btn" data-acc="covers">Compléter mes fiches</button></div>
     </div>
     <p id="accMsg" aria-live="polite"></p>

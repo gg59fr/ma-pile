@@ -190,3 +190,27 @@ alter table public.lego_sync enable row level security;   -- no policy: only the
 grant select on table public.lego_sets to authenticated;
 grant select, insert, update on table public.lego_sets, public.lego_sync to service_role;
 revoke truncate, trigger, references on table public.lego_sets, public.lego_sync from anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Server-side secrets (BoardGameGeek token, admin key for maintenance calls).
+-- The private schema is not exposed by the API; only service_role (edge functions)
+-- can read a value, through app_secret(). Values are set by hand, never in this repo:
+--   insert into private.settings(key, value) values ('bgg_token', '…');
+-- ---------------------------------------------------------------------------
+create schema if not exists private;
+revoke all on schema private from public, anon, authenticated;
+create table if not exists private.settings (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+revoke all on private.settings from public, anon, authenticated;
+
+create or replace function public.app_secret(p_key text)
+returns text language sql stable security definer set search_path = ''
+as $$ select value from private.settings where key = p_key; $$;
+revoke all on function public.app_secret(text) from public, anon, authenticated;
+grant execute on function public.app_secret(text) to service_role;
+
+-- The bgg-game edge function fills game images (photo, cover_from = 'bgg', extra.bgg / bigImg).
+grant select, update on public.items to service_role;

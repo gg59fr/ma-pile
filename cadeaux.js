@@ -34,6 +34,7 @@ function render(){
     ? `${items.length} idée${items.length > 1 ? 's' : ''} · ${free} encore libre${free > 1 ? 's' : ''}${mineCount ? ` · tu en offres ${mineCount}` : ''}`
     : 'La liste est vide pour l’instant. Reviens plus tard !';
   $('pInfo').hidden = !items.length;
+  $('pBgg').hidden = !items.some(i => /geekdo-images\.com/.test(i.photo || ''));
   $('pList').innerHTML = items.map(it => {
     const T = TYPES[it.type] || TYPES.objet;
     const own = !!mine[it.id], taken = it.reserved && !own, wait = busy.has(it.id);
