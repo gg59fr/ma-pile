@@ -44,7 +44,7 @@ async function search(q: string, exact: boolean): Promise<Hit[]> {
   const xml = await bgg(`search?type=boardgame,boardgameexpansion${exact ? '&exact=1' : ''}&query=${encodeURIComponent(q)}`);
   return [...xml.matchAll(/<item type="([^"]+)" id="(\d+)">([\s\S]*?)<\/item>/g)].slice(0, 200).map(m => ({ type: m[1], id: m[2], name: attr(m[3], 'name'), year: +attr(m[3], 'yearpublished') || null }));
 }
-function pick(hits: Hit[], title: string, year: number | null, expansion: boolean): Hit | null {
+function pick(hits: Hit[], title: string, year: number | null, expansion: boolean, tie?: Hit[]): Hit | null {
   const want = norm(title);
   let c = hits.filter(h => norm(h.name) === want);
   if (!c.length) return null;
@@ -53,7 +53,7 @@ function pick(hits: Hit[], title: string, year: number | null, expansion: boolea
   // BGG lists a game once per type; the same id can come back twice.
   c = c.filter((h, i) => c.findIndex(x => x.id === h.id) === i);
   if (c.length === 1) return c[0];
-  if (!year) return null;                       // several games share the name and nothing tells them apart
+  if (!year) { if (tie) tie.push(...c); return null; }   // several games share the name: decided by popularity in find()
   const dist = (h: Hit) => h.year == null ? 99 : (h.year <= year ? year - h.year : (h.year - year) * 2);
   c.sort((a, b) => dist(a) - dist(b));
   return dist(c[0]) < dist(c[1]) && dist(c[0]) <= 6 ? c[0] : null;
@@ -61,7 +61,8 @@ function pick(hits: Hit[], title: string, year: number | null, expansion: boolea
 async function find(title: string, year: number | null, expansion: boolean): Promise<Hit | null> {
   const tries = [title, title.split(/\s+[:\-–]\s+/)[0]].filter((t, i, a) => t && a.indexOf(t) === i);
   for (const t of tries) {
-    const hit = pick(await search(t, true), t, year, expansion);
+    const tie: Hit[] = [];
+    const hit = pick(await search(t, true), t, year, expansion, tie) || await popular(tie);
     if (hit) return hit;
   }
   // Last try: a single BGG game whose name starts with the short title ("Dorfromantik" → "Dorfromantik: The Board Game").
@@ -72,6 +73,17 @@ async function find(title: string, year: number | null, expansion: boolean): Pro
     if (ids.length === 1) return c[0];
   }
   return null;
+}
+// Same name, no year to tell them apart: take the game far more rated on BGG than the others
+// (the well-known edition rather than a namesake), otherwise leave it undecided.
+async function popular(c: Hit[]): Promise<Hit | null> {
+  if (c.length < 2) return null;
+  const ids = c.slice(0, 20).map(h => h.id);
+  const xml = await bgg(`thing?id=${ids.join(',')}&stats=1`);
+  const n = new Map([...xml.matchAll(/<item type="[^"]+" id="(\d+)">([\s\S]*?)<\/item>/g)].map(m => [m[1], +attr(m[2], 'usersrated') || 0]));
+  const ranked = c.slice(0, 20).sort((a, b) => (n.get(b.id) || 0) - (n.get(a.id) || 0));
+  const top = n.get(ranked[0].id) || 0, next = n.get(ranked[1].id) || 0;
+  return top >= 20 && top >= next * 5 ? ranked[0] : null;
 }
 async function things(ids: string[]) {
   const out = new Map<string, Record<string, unknown>>();
