@@ -1,6 +1,6 @@
 // Ma Pile service worker: the app shell opens offline, photos are kept once seen.
 // Bump VERSION on every release so phones pick up the new files.
-const VERSION = 'v15';
+const VERSION = 'v16';
 const SHELL = `mapile-shell-${VERSION}`;
 const RUNTIME = 'mapile-runtime';
 const PHOTOS = 'mapile-photos';

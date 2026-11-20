@@ -2,6 +2,7 @@
 // it is read from private.settings through public.app_secret('bgg_token').
 //
 //   POST {title, year?, expansion?}   signed-in user → best BGG match (image, players, time)
+//   POST {mode: 'search', q}          signed-in user → up to 10 BGG games for a typed name, with full details
 //   POST {mode: 'backfill', limit?}   signed-in user → fills that user's games without an image;
 //                                     x-admin-key header (private.settings 'admin_key') → the owner's games
 //
@@ -78,7 +79,10 @@ async function things(ids: string[]) {
     for (const m of xml.matchAll(/<item type="[^"]+" id="(\d+)">([\s\S]*?)<\/item>/g)) {
       const x = m[2], min = +attr(x, 'minplayers'), max = +attr(x, 'maxplayers');
       const tmin = +attr(x, 'minplaytime'), tmax = +attr(x, 'maxplaytime');
+      const designers = [...x.matchAll(/<link type="boardgamedesigner" id="\d+" value="([^"]*)"/g)].map(d => decode(d[1])).filter(d => d !== '(Uncredited)');
       out.set(m[1], {
+        expansion: m[0].startsWith('<item type="boardgameexpansion"'),
+        designers: designers.slice(0, 3), age: +attr(x, 'minage') || null,
         bgg: +m[1], name: attr(x, 'name'), year: +attr(x, 'yearpublished') || null,
         thumb: text(x, 'thumbnail') || null, image: text(x, 'image') || null,
         players: min ? (max && max !== min ? `${min} à ${max}` : `${min}`) : null,
@@ -109,6 +113,20 @@ Deno.serve(async (req) => {
   let body: Record<string, unknown> = {};
   try { body = await req.json(); } catch (_) { /* empty body */ }
   try {
+    if (body.mode === 'search') {
+      const q = String(body.q || '').trim();
+      if (q.length < 2) return json({ results: [] });
+      const want = norm(q);
+      const score = (h: Hit) => { const n = norm(h.name); return n === want ? 0 : n.startsWith(want) ? 1 : n.includes(want) ? 2 : 3; };
+      let hits = await search(q, false);
+      if (!hits.length && q.includes(' ')) hits = await search(q.split(/\s+[:\-–]\s+/)[0], false);
+      const seen = new Set<string>();
+      hits = hits.sort((a, b) => score(a) - score(b) || (a.type === 'boardgame' ? 0 : 1) - (b.type === 'boardgame' ? 0 : 1) || (b.year || 0) - (a.year || 0))
+        .filter(h => !seen.has(h.id) && seen.add(h.id)).slice(0, 10);
+      const info = await things(hits.map(h => h.id));
+      // Keep the name that matched the search (often the French title), BGG's main name as a hint.
+      return json({ results: hits.map(h => ({ ...info.get(h.id), name: h.name, mainName: info.get(h.id)?.name || h.name, year: h.year ?? info.get(h.id)?.year ?? null })).filter(r => r.bgg) });
+    }
     if (body.mode !== 'backfill') {
       const title = String(body.title || '').trim();
       if (!title) return json({ error: 'title_required' }, 400);
@@ -117,7 +135,7 @@ Deno.serve(async (req) => {
       return json({ found: true, ...(await things([hit.id])).get(hit.id) });
     }
     const limit = Math.min(12, Math.max(1, Number(body.limit) || 10));  // stays within the function's time limit
-    const { data: games, error } = await admin.from('items').select('id,title,detail,pub_year,extra,photo')
+    const { data: games, error } = await admin.from('items').select('id,title,creator,detail,pub_year,extra,photo')
       .eq('user_id', uid).eq('type', 'jeu').is('photo', null).order('created_at').limit(400);
     if (error) throw error;
     const todo = (games || []).filter(g => !(g.extra && (g.extra.bgg || g.extra.bgg_none))).slice(0, limit);
@@ -134,7 +152,10 @@ Deno.serve(async (req) => {
       const extra = { ...(item.extra || {}), bgg: t.bgg, bigImg: t.image || undefined };
       if (!extra.players && t.players) extra.players = t.players;
       if (!extra.time && t.time) extra.time = String(t.time);
+      if (!extra.age && t.age) extra.age = t.age;
       const patch: Record<string, unknown> = { extra, updated_at: Date.now() };
+      if (!item.creator && (t.designers as string[])?.length) patch.creator = (t.designers as string[]).slice(0, 2).join(', ');
+      if (!item.pub_year && t.year) patch.pub_year = t.year;
       if (t.thumb) { patch.photo = t.thumb; patch.cover_from = 'bgg'; }
       const { error: e } = await admin.from('items').update(patch).eq('id', item.id);
       if (!e) filled++;

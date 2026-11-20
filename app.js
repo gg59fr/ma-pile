@@ -264,7 +264,7 @@ function renderShelf(){
 /* ---------- fiche (sheet) ---------- */
 const find = id => state.items.find(i => i.id === id);
 function openSheet(id){
-  state.openId = id; state.delArmed = false; state.catalogOpen = state.accountOpen = false;
+  state.openId = id; state.delArmed = false; state.catalogOpen = state.accountOpen = state.gameSearchOpen = false;
   const it = find(id); if (!it) return;
   const T = Object.keys(TYPES);
   $('sheet').innerHTML = `
@@ -301,7 +301,7 @@ function openSheet(id){
   $('sClose').focus({preventScroll: true});
 }
 function closeSheet(){
-  if (state.accountOpen || state.catalogOpen) { state.accountOpen = state.catalogOpen = false; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = ''; return; }
+  if (state.accountOpen || state.catalogOpen || state.gameSearchOpen) { state.accountOpen = state.catalogOpen = state.gameSearchOpen = false; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = ''; return; }
   if (!state.openId) return;
   flushSave();
   const closed = state.openId;
@@ -327,7 +327,7 @@ function refreshSheet(){
   $('sExtra').innerHTML = !it.owned ? '' :
     it.type === 'lego' ? chipRow('État', 'data-cond', COND, it.cond) + (it.extra && it.extra.pieces ? `<p class="sub">${fmtN(it.extra.pieces)} pièces${it.extra.theme ? ' · ' + esc(it.extra.theme) : ''}${it.extra.year ? ' · ' + it.extra.year : ''}</p>` : '')
     : it.type === 'jeu' ? `<div class="field"><span class="flabel" id="lPlays">Parties jouées</span><div class="plays" role="group" aria-labelledby="lPlays"><button type="button" class="iconbtn" data-plays="-1" aria-label="Une partie de moins"${it.plays ? '' : ' disabled'}>−</button><output aria-live="polite">${it.plays || 0}</output><button type="button" class="iconbtn" data-plays="1" aria-label="Une partie de plus">+</button></div></div>`
-      + (it.extra && (it.extra.players || it.extra.time) ? `<p class="sub">${[it.extra.players && `${esc(it.extra.players)} joueurs`, it.extra.time && `${esc(it.extra.time)} min`].filter(Boolean).join(' · ')}</p>` : '')
+      + (it.extra && (it.extra.players || it.extra.time) ? `<p class="sub">${[it.extra.players && `${esc(it.extra.players)} joueurs`, it.extra.time && `${esc(it.extra.time)} min`, it.extra.age && `dès ${+it.extra.age} ans`].filter(Boolean).join(' · ')}</p>` : '')
     : isBook(it) ? chipRow('Format', 'data-format', FORMAT, it.format) : '';
   $('sExtra').hidden = !$('sExtra').innerHTML;
   $('sPhoto').textContent = shown ? 'Changer la photo' : 'Ajouter une photo';
@@ -643,7 +643,7 @@ async function autoEnrich(id, force){
 async function gameEnrich(id, force){
   const it = find(id);
   if (!it || it.type !== 'jeu' || !sb || state.coverBusy.has(id)) return null;
-  if (it.photo || state.previews[id] || (!force && (it.coverFrom === 'none' || (it.extra && (it.extra.bgg || it.extra.bgg_none))))) return null;
+  if ((!force && (it.photo || state.previews[id]) && it.extra && (it.extra.players || it.extra.time)) || (!force && (it.coverFrom === 'none' || (it.extra && (it.extra.bgg || it.extra.bgg_none))))) return null;
   const title = (it.title || '').trim(); if (title.length < 2) return null;
   const key = 'bgg|' + normT(title);
   if (!force && state.coverTried[id] === key) return null;
@@ -657,8 +657,10 @@ async function gameEnrich(id, force){
   const extra = { ...(cur.extra || {}), bgg: r.bgg, bigImg: r.image || undefined }; delete extra.bgg_none;
   if (!extra.players && r.players) extra.players = r.players;
   if (!extra.time && r.time) extra.time = String(r.time);
+  if (!extra.age && r.age) extra.age = r.age;
   const patch = { extra };
-  if (r.thumb && !cur.photo) { patch.photo = r.thumb; patch.coverFrom = 'bgg'; }
+  if (r.thumb && !cur.photo && !state.previews[id]) { patch.photo = r.thumb; patch.coverFrom = 'bgg'; }
+  if (!(cur.creator || '').trim() && r.designers && r.designers.length) patch.creator = r.designers.slice(0, 2).join(', ');
   if (!cur.pubYear && r.year) patch.pubYear = r.year;
   save(id, patch);
   state.idNote[id] = `Trouvé sur BoardGameGeek : ${r.name}${r.year ? ` (${r.year})` : ''}.`;
@@ -1105,7 +1107,7 @@ document.addEventListener('click', e => {
   const act = t.dataset.act;
   if (act === 'photo') { if (!store) return; setMenu(true); }
   else if (act === 'library') { state.camTarget = null; $('lib').click(); }
-  else if (act === 'zoom' && state.openId) { const it = find(state.openId); const src = it && ((it.extra && it.extra.bigImg) || it.photo || state.previews[it.id]); if (src) openPhoto(src, t); }
+  else if (act === 'zoom' && state.openId) { const it = find(state.openId); const src = it && ((it.coverFrom === 'bgg' && it.extra && it.extra.bigImg) || it.photo || state.previews[it.id]); if (src) openPhoto(src, t); }
   else if (act === 'close') closeSheet();
   else if (act === 'gone' && state.openId) { flushSave(); markGone(state.openId); }
   else if (act === 'cover' && state.openId) { flushSave(); delete state.idNote[state.openId]; const it = find(state.openId); if (it && it.type === 'jeu') gameEnrich(state.openId, true); else autoEnrich(state.openId, true); }
@@ -1136,6 +1138,7 @@ $('addMenu').addEventListener('click', e => {
   setMenu(false); state.camTarget = null;
   if (b.dataset.add === 'scan') openScanner();
   else if (b.dataset.add === 'lego') openCatalog();
+  else if (b.dataset.add === 'bgg') openGameSearch();
   else if (b.dataset.add === 'cam') $('cam').click(); else if (b.dataset.add === 'lib') $('lib').click(); else addManual();
 });
 document.addEventListener('pointerdown', e => { if (!$('addMenu').hidden && !e.target.closest('#addMenu, #fab')) setMenu(false); });
@@ -1150,7 +1153,7 @@ let lbReturn = null;
 function openPhoto(src, from){ lbReturn = from || null; const big = RB_THUMB.exec(src || ''); $('lbImg').src = big ? `${big[1]}/1000x800p.jpg` : src; $('lightbox').hidden = false; $('lbClose').focus({preventScroll: true}); }
 function closePhoto(){ if ($('lightbox').hidden) return false; $('lightbox').hidden = true; $('lbImg').removeAttribute('src'); if (lbReturn && document.contains(lbReturn)) lbReturn.focus({preventScroll: true}); lbReturn = null; return true; }
 $('lightbox').addEventListener('click', e => { e.stopPropagation(); closePhoto(); });
-document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('scanner').hidden) { closeScanner(); return; } if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen || state.catalogOpen) closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('scanner').hidden) { closeScanner(); return; } if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen || state.catalogOpen || state.gameSearchOpen) closeSheet(); });
 window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
 $('copyGifts').onclick = () => {
   const text = giftText(), ta = $('giftText');
@@ -1465,6 +1468,82 @@ $('sheet').addEventListener('input', e => { if (e.target.id === 'catQ') { cat.q 
 $('sheet').addEventListener('click', e => {
   const th = e.target.closest('[data-ctheme]'); if (th) { cat.theme = th.dataset.ctheme; cat.q = ''; openCatalog(); return; }
   const add = e.target.closest('[data-cadd]'); if (add) { catAdd(add.dataset.cadd, add.dataset.cto); return; }
+});
+
+/* ---------- Board game search (BoardGameGeek, through the bgg-game function) ----------
+   Typing a name lists BGG games with French titles when BGG has them; one touch adds the game
+   with its image, players, time, age, designers and year. */
+const gs = { q: '', rows: [], seq: 0, timer: null, err: '' };
+const gameFields = g => ({
+  title: g.name, creator: (g.designers || []).slice(0, 2).join(', '), detail: g.expansion ? 'Extension' : '',
+  photo: g.thumb || null, coverFrom: g.thumb ? 'bgg' : null, pubYear: g.year || null,
+  extra: { bgg: g.bgg, bigImg: g.image || undefined, players: g.players || undefined, time: g.time ? String(g.time) : undefined, age: g.age || undefined }
+});
+function openGameSearch(){
+  if (!sb) return;
+  state.gameSearchOpen = true;
+  $('sheet').innerHTML = `
+    <div class="sheet-bar"><h2 id="sheetTitle">Ajouter un jeu</h2>
+      <button type="button" class="iconbtn" id="sClose" aria-label="Fermer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <label for="gsQ" class="sr">Nom du jeu</label>
+    <div class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="gsQ" type="search" inputmode="search" enterkeyhint="search" autocomplete="off" placeholder="Nom du jeu (Azul, Les Aventuriers du Rail…)" value="${esc(gs.q)}"></div>
+    <ul class="rows" id="gsList" aria-live="polite"></ul>
+    <p class="chart-note">Recherche sur BoardGameGeek : touche « Je l’ai » ou le cœur, l’image, les joueurs, la durée et l’auteur sont remplis. <a class="link inl" href="https://boardgamegeek.com" target="_blank" rel="noopener">Powered by BGG</a>.</p>`;
+  $('sheetWrap').hidden = false; document.body.style.overflow = 'hidden';
+  renderGameSearch();
+  setTimeout(() => $('gsQ') && $('gsQ').focus({preventScroll: true}), 60);
+}
+async function gameSearch(){
+  const seq = ++gs.seq, q = gs.q.trim();
+  if (q.length < 2) { gs.rows = []; gs.err = ''; renderGameSearch(); return; }
+  const list = $('gsList'); if (list) list.innerHTML = '<li class="busy"><span class="spin"></span>Recherche sur BoardGameGeek…</li>';
+  let r = null;
+  try { const { data } = await sb.functions.invoke('bgg-game', { body: { mode: 'search', q } }); r = data; } catch (e) {}
+  if (seq !== gs.seq) return;
+  gs.err = !r || r.error ? 'BoardGameGeek ne répond pas. Réessaie dans un instant.' : '';
+  gs.rows = (r && r.results) || [];
+  renderGameSearch();
+}
+function renderGameSearch(){
+  const list = $('gsList'); if (!list) return;
+  const q = gs.q.trim();
+  const manual = q ? `<li class="sub"><button type="button" class="link" data-gsmanual>Pas dans la liste ? Ajouter « ${esc(q)} » sans BoardGameGeek</button></li>` : '';
+  if (gs.err) { list.innerHTML = `<li class="sub">${esc(gs.err)}</li>` + manual; return; }
+  if (q.length < 2) { list.innerHTML = '<li class="sub">Tape le nom du jeu, en français ou en anglais.</li>'; return; }
+  if (!gs.rows.length) { list.innerHTML = '<li class="sub">Aucun jeu trouvé. Essaie un autre mot du titre.</li>' + manual; return; }
+  const mine = new Map(state.items.filter(i => i.type === 'jeu' && i.extra && i.extra.bgg).map(i => [String(i.extra.bgg), i]));
+  list.innerHTML = gs.rows.map(g => {
+    const it = mine.get(String(g.bgg));
+    const act = it
+      ? `<button type="button" class="pill-btn ${it.owned ? 'own' : ''}" data-open="${esc(it.id)}">${it.owned ? 'Dans ma collection' : 'En envie'}</button>`
+      : `<button type="button" class="btn sun cat-own" data-gsadd="${g.bgg}" data-gsto="collection">Je l’ai</button><button type="button" class="iconbtn" data-gsadd="${g.bgg}" data-gsto="envie" aria-label="Ajouter ${esc(g.name)} à mes envies"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg></button>`;
+    const bits = [g.year, g.players && `${g.players} j.`, g.time && `${g.time} min`, g.expansion && 'extension'].filter(Boolean).join(' · ');
+    const other = g.mainName && normT(g.mainName) !== normT(g.name) ? `<span class="w">${esc(g.mainName)}</span>` : '';
+    return `<li class="cat-row"><span class="mini" style="--c:var(--c-jeu)">${g.thumb ? `<img src="${esc(g.thumb)}" alt="" loading="lazy">` : ''}</span>
+      <span class="meta"><span class="t">${esc(g.name)}</span>${other}<span class="w">${esc(bits)}${g.designers && g.designers.length ? ' · ' + esc(g.designers.slice(0, 2).join(', ')) : ''}</span></span>
+      <span class="cat-act">${act}</span></li>`;
+  }).join('') + manual;
+}
+function gameAdd(bggId, to){
+  const g = gs.rows.find(r => String(r.bgg) === String(bggId)); if (!g || !store) return;
+  const prev = state.addTo; state.addTo = to;
+  const id = store.newId(), base = newBase(id);
+  state.addTo = prev;
+  createItem({ ...base, type: 'jeu', ...gameFields(g) });
+  renderAll(); renderGameSearch();
+  toast(to === 'collection' ? `${g.name} ajouté à ta collection` : `${g.name} ajouté à tes envies`);
+}
+function gameManual(){
+  const title = gs.q.trim(); if (!title || !store) return;
+  const id = store.newId(), it = { ...newBase(id), type: 'jeu', title, extra: { bgg_none: true } };
+  createItem(it); renderAll(); showTarget(); openSheet(id);
+}
+$('sheet').addEventListener('input', e => { if (e.target.id === 'gsQ') { gs.q = e.target.value; clearTimeout(gs.timer); gs.timer = setTimeout(gameSearch, 700); } });
+$('sheet').addEventListener('keydown', e => { if (e.target.id === 'gsQ' && e.key === 'Enter') { e.preventDefault(); clearTimeout(gs.timer); gameSearch(); e.target.blur(); } });
+$('sheet').addEventListener('click', e => {
+  const add = e.target.closest('[data-gsadd]'); if (add) { gameAdd(add.dataset.gsadd, add.dataset.gsto); return; }
+  if (e.target.closest('[data-gsmanual]')) gameManual();
 });
 
 /* ---------- account + backup ---------- */
