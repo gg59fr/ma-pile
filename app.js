@@ -327,7 +327,7 @@ function refreshSheet(){
   $('sExtra').innerHTML = !it.owned ? '' :
     it.type === 'lego' ? chipRow('État', 'data-cond', COND, it.cond) + (it.extra && it.extra.pieces ? `<p class="sub">${fmtN(it.extra.pieces)} pièces${it.extra.theme ? ' · ' + esc(it.extra.theme) : ''}${it.extra.year ? ' · ' + it.extra.year : ''}</p>` : '')
     : it.type === 'jeu' ? `<div class="field"><span class="flabel" id="lPlays">Parties jouées</span><div class="plays" role="group" aria-labelledby="lPlays"><button type="button" class="iconbtn" data-plays="-1" aria-label="Une partie de moins"${it.plays ? '' : ' disabled'}>−</button><output aria-live="polite">${it.plays || 0}</output><button type="button" class="iconbtn" data-plays="1" aria-label="Une partie de plus">+</button></div></div>`
-      + (it.extra && (it.extra.players || it.extra.time) ? `<p class="sub">${[it.extra.players && `${esc(it.extra.players)} joueurs`, it.extra.time && `${esc(it.extra.time)} min`, it.extra.age && `dès ${+it.extra.age} ans`].filter(Boolean).join(' · ')}</p>` : '')
+      + (it.extra && (it.extra.players || it.extra.time || it.extra.publisher) ? `<p class="sub">${[it.extra.players && `${esc(it.extra.players)} joueurs`, it.extra.time && `${esc(it.extra.time)} min`, it.extra.age && `dès ${+it.extra.age} ans`, it.extra.publisher && `éd. ${esc(it.extra.publisher)}`].filter(Boolean).join(' · ')}</p>` : '')
     : isBook(it) ? chipRow('Format', 'data-format', FORMAT, it.format) : '';
   $('sExtra').hidden = !$('sExtra').innerHTML;
   $('sPhoto').textContent = shown ? 'Changer la photo' : 'Ajouter une photo';
@@ -654,7 +654,7 @@ async function gameEnrich(id, force){
   const cur = find(id); if (!cur) return null;
   if (!r || r.error) { delete state.coverTried[id]; state.idNote[id] = 'BoardGameGeek ne répond pas. Réessaie plus tard.'; renderAll(); return null; }
   if (!r.found) { save(id, { extra: { ...(cur.extra || {}), bgg_none: true } }); state.idNote[id] = 'Pas trouvé sur BoardGameGeek avec ce titre exact. Corrige le titre ou ajoute une photo.'; renderAll(); return null; }
-  const extra = { ...(cur.extra || {}), bgg: r.bgg, bgg_info: true, bigImg: r.image || undefined }; delete extra.bgg_none;
+  const extra = { ...(cur.extra || {}), bgg: r.bgg, bgg_info: true, fr_checked: true, fr: r.fr || undefined, publisher: r.publisher || undefined, bigImg: r.image || undefined }; delete extra.bgg_none;
   if (!extra.players && r.players) extra.players = r.players;
   if (!extra.time && r.time) extra.time = String(r.time);
   if (!extra.age && r.age) extra.age = r.age;
@@ -1477,7 +1477,7 @@ const gs = { q: '', rows: [], seq: 0, timer: null, err: '' };
 const gameFields = g => ({
   title: g.name, creator: (g.designers || []).slice(0, 2).join(', '), detail: g.expansion ? 'Extension' : '',
   photo: g.thumb || null, coverFrom: g.thumb ? 'bgg' : null, pubYear: g.year || null,
-  extra: { bgg: g.bgg, bgg_info: true, bigImg: g.image || undefined, players: g.players || undefined, time: g.time ? String(g.time) : undefined, age: g.age || undefined }
+  extra: { bgg: g.bgg, bgg_info: true, fr_checked: true, fr: g.fr || undefined, publisher: g.publisher || undefined, bigImg: g.image || undefined, players: g.players || undefined, time: g.time ? String(g.time) : undefined, age: g.age || undefined }
 });
 function openGameSearch(){
   if (!sb) return;
@@ -1489,7 +1489,7 @@ function openGameSearch(){
     <div class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="gsQ" type="search" inputmode="search" enterkeyhint="search" autocomplete="off" placeholder="Nom du jeu (Azul, Les Aventuriers du Rail…)" value="${esc(gs.q)}"></div>
     <ul class="rows" id="gsList" aria-live="polite"></ul>
-    <p class="chart-note">Recherche sur BoardGameGeek : touche « Je l’ai » ou le cœur, l’image, les joueurs, la durée et l’auteur sont remplis. <a class="link inl" href="https://boardgamegeek.com" target="_blank" rel="noopener">Powered by BGG</a>.</p>`;
+    <p class="chart-note">Recherche sur BoardGameGeek : touche « Je l’ai » ou le cœur : image de l’édition française quand elle existe (VF), joueurs, durée, auteur et éditeur sont remplis. <a class="link inl" href="https://boardgamegeek.com" target="_blank" rel="noopener">Powered by BGG</a>.</p>`;
   $('sheetWrap').hidden = false; document.body.style.overflow = 'hidden';
   renderGameSearch();
   setTimeout(() => $('gsQ') && $('gsQ').focus({preventScroll: true}), 60);
@@ -1518,7 +1518,7 @@ function renderGameSearch(){
     const act = it
       ? `<button type="button" class="pill-btn ${it.owned ? 'own' : ''}" data-open="${esc(it.id)}">${it.owned ? 'Dans ma collection' : 'En envie'}</button>`
       : `<button type="button" class="btn sun cat-own" data-gsadd="${g.bgg}" data-gsto="collection">Je l’ai</button><button type="button" class="iconbtn" data-gsadd="${g.bgg}" data-gsto="envie" aria-label="Ajouter ${esc(g.name)} à mes envies"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg></button>`;
-    const bits = [g.year, g.players && `${g.players} j.`, g.time && `${g.time} min`, g.expansion && 'extension'].filter(Boolean).join(' · ');
+    const bits = [g.fr ? `VF ${g.year || ''}`.trim() : g.year, g.publisher, g.players && `${g.players} j.`, g.time && `${g.time} min`, g.expansion && 'extension'].filter(Boolean).join(' · ');
     const other = g.mainName && normT(g.mainName) !== normT(g.name) ? `<span class="w">${esc(g.mainName)}</span>` : '';
     return `<li class="cat-row"><span class="mini" style="--c:var(--c-jeu)">${g.thumb ? `<img src="${esc(g.thumb)}" alt="" loading="lazy">` : ''}</span>
       <span class="meta"><span class="t">${esc(g.name)}</span>${other}<span class="w">${esc(bits)}${g.designers && g.designers.length ? ' · ' + esc(g.designers.slice(0, 2).join(', ')) : ''}</span></span>

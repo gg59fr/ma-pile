@@ -3,6 +3,7 @@
 //
 //   POST {title, year?, expansion?}   signed-in user → best BGG match (image, players, time)
 //   POST {mode: 'search', q}          signed-in user → up to 10 BGG games for a typed name, with full details
+//   POST {mode: 'french'}             games with a BGG picture: switch to the French edition's box (12 per call)
 //   POST {mode: 'refresh'}            games already linked to BGG: adds designers and age where missing (20 per call)
 //   POST {mode: 'backfill', limit?}   signed-in user → fills that user's games without an image;
 //                                     x-admin-key header (private.settings 'admin_key') → the owner's games
@@ -94,23 +95,44 @@ async function popular(c: Hit[]): Promise<Hit | null> {
   const top = n.get(ranked[0].id) || 0, next = n.get(ranked[1].id) || 0;
   return top >= 20 && top >= next * 5 ? ranked[0] : null;
 }
-async function things(ids: string[]) {
+// Game details. BGG's main picture is the original (often English, often old) box: we look through the
+// game's editions ("versions") for a French one with a picture, the closest to the year of the user's copy
+// (the year imported from Myludo is the French edition's) or else the newest, and use its box and publisher.
+type Version = { id: string; thumb: string; image: string; year: number; langs: string[]; publisher: string };
+function frenchVersion(vers: Version[], year: number | null): Version | null {
+  const c = vers.filter(v => v.thumb && v.langs.includes('French'));
+  if (!c.length) return null;
+  const rank = (v: Version) => (v.langs.length === 1 ? 0 : 10000) + (year ? Math.abs((v.year || 0) - year) * 10 : (3000 - (v.year || 0)));
+  return c.sort((a, b) => rank(a) - rank(b))[0];
+}
+async function things(ids: string[], years: Map<string, number | null> = new Map()) {
   const out = new Map<string, Record<string, unknown>>();
-  for (let i = 0; i < ids.length; i += 20) {
-    const xml = await bgg(`thing?id=${ids.slice(i, i + 20).join(',')}`);
-    for (const m of xml.matchAll(/<item type="[^"]+" id="(\d+)">([\s\S]*?)<\/item>/g)) {
-      const x = m[2], min = +attr(x, 'minplayers'), max = +attr(x, 'maxplayers');
+  for (let i = 0; i < ids.length; i += 4) {            // editions make the answer large: a few games per call
+    const xml = await bgg(`thing?id=${ids.slice(i, i + 4).join(',')}&versions=1`);
+    const starts = [...xml.matchAll(/<item type="(boardgame|boardgameexpansion)" id="(\d+)">/g)];
+    starts.forEach((m, k) => {
+      const body = xml.slice(m.index! + m[0].length, k + 1 < starts.length ? starts[k + 1].index : xml.length);
+      const vblock = (body.match(/<versions>([\s\S]*?)<\/versions>/) || [])[1] || '';
+      const x = body.replace(/<versions>[\s\S]*?<\/versions>/, '');
+      const vers: Version[] = [...vblock.matchAll(/<item type="boardgameversion" id="(\d+)">([\s\S]*?)<\/item>/g)].map(v => ({
+        id: v[1], thumb: text(v[2], 'thumbnail'), image: text(v[2], 'image'), year: +attr(v[2], 'yearpublished') || 0,
+        langs: [...v[2].matchAll(/<link type="language" id="\d+" value="([^"]*)"/g)].map(l => decode(l[1])),
+        publisher: decode((v[2].match(/<link type="boardgamepublisher" id="\d+" value="([^"]*)"/) || [])[1] || ''),
+      }));
+      const fr = frenchVersion(vers, years.get(m[2]) ?? null);
+      const min = +attr(x, 'minplayers'), max = +attr(x, 'maxplayers');
       const tmin = +attr(x, 'minplaytime'), tmax = +attr(x, 'maxplaytime');
       const designers = [...x.matchAll(/<link type="boardgamedesigner" id="\d+" value="([^"]*)"/g)].map(d => decode(d[1])).filter(d => d !== '(Uncredited)');
-      out.set(m[1], {
-        expansion: m[0].startsWith('<item type="boardgameexpansion"'),
+      out.set(m[2], {
+        expansion: m[1] === 'boardgameexpansion',
         designers: designers.slice(0, 3), age: +attr(x, 'minage') || null,
-        bgg: +m[1], name: attr(x, 'name'), year: +attr(x, 'yearpublished') || null,
-        thumb: text(x, 'thumbnail') || null, image: text(x, 'image') || null,
+        bgg: +m[2], name: attr(x, 'name'), year: +attr(x, 'yearpublished') || null,
+        thumb: fr ? fr.thumb : (text(x, 'thumbnail') || null), image: fr ? (fr.image || fr.thumb) : (text(x, 'image') || null),
+        fr: fr ? +fr.id : null, frYear: fr ? fr.year || null : null, publisher: fr ? fr.publisher || null : null,
         players: min ? (max && max !== min ? `${min} à ${max}` : `${min}`) : null,
         time: tmin ? (tmax && tmax !== tmin ? `${tmin} à ${tmax}` : `${tmin}`) : (+attr(x, 'playingtime') || null),
       });
-    }
+    });
   }
   return out;
 }
@@ -144,10 +166,29 @@ Deno.serve(async (req) => {
       if (!hits.length && q.includes(' ')) hits = await search(q.split(/\s+[:\-–]\s+/)[0], false);
       const seen = new Set<string>();
       hits = hits.sort((a, b) => score(a) - score(b) || (a.type === 'boardgame' ? 0 : 1) - (b.type === 'boardgame' ? 0 : 1) || (b.year || 0) - (a.year || 0))
-        .filter(h => !seen.has(h.id) && seen.add(h.id)).slice(0, 10);
+        .filter(h => !seen.has(h.id) && seen.add(h.id)).slice(0, 8);
       const info = await things(hits.map(h => h.id));
       // Keep the name that matched the search (often the French title), BGG's main name as a hint.
-      return json({ results: hits.map(h => ({ ...info.get(h.id), name: h.name, mainName: info.get(h.id)?.name || h.name, year: h.year ?? info.get(h.id)?.year ?? null })).filter(r => r.bgg) });
+      return json({ results: hits.map(h => ({ ...info.get(h.id), name: h.name, mainName: info.get(h.id)?.name || h.name, year: info.get(h.id)?.frYear ?? h.year ?? info.get(h.id)?.year ?? null })).filter(r => r.bgg) });
+    }
+    if (body.mode === 'french') {
+      // Games whose picture came from BGG: switch to the French edition's box when BGG has one.
+      const { data: games, error } = await admin.from('items').select('id,pub_year,extra')
+        .eq('user_id', uid).eq('type', 'jeu').eq('cover_from', 'bgg').is('extra->fr_checked', null).order('created_at').limit(12);
+      if (error) throw error;
+      const info = await things([...new Set((games || []).map(g => String(g.extra.bgg)))], new Map((games || []).map(g => [String(g.extra.bgg), g.pub_year])));
+      let french = 0; const none: string[] = [];
+      for (const g of games || []) {
+        const t = info.get(String(g.extra.bgg));
+        const extra = { ...g.extra, fr_checked: true };
+        const patch: Record<string, unknown> = { extra, updated_at: Date.now() };
+        if (t && t.fr) { patch.photo = t.thumb; extra.bigImg = t.image || t.thumb; extra.fr = t.fr; if (t.publisher) extra.publisher = t.publisher; french++; }
+        else none.push(String(g.extra.bgg));
+        await admin.from('items').update(patch).eq('id', g.id);
+      }
+      const { count } = await admin.from('items').select('id', { count: 'exact', head: true })
+        .eq('user_id', uid).eq('type', 'jeu').eq('cover_from', 'bgg').is('extra->fr_checked', null);
+      return json({ done: (games || []).length, french, none, remaining: count ?? 0 });
     }
     if (body.mode === 'refresh') {
       const { data: games, error } = await admin.from('items').select('id,creator,pub_year,extra')
@@ -179,7 +220,7 @@ Deno.serve(async (req) => {
       if (!title) return json({ error: 'title_required' }, 400);
       const hit = await find(title, Number(body.year) || null, !!body.expansion);
       if (!hit) return json({ found: false });
-      return json({ found: true, ...(await things([hit.id])).get(hit.id) });
+      return json({ found: true, ...(await things([hit.id], new Map([[hit.id, Number(body.year) || null]]))).get(hit.id) });
     }
     const limit = Math.min(12, Math.max(1, Number(body.limit) || 10));  // stays within the function's time limit
     const { data: games, error } = await admin.from('items').select('id,title,creator,detail,pub_year,extra,photo')
@@ -192,11 +233,11 @@ Deno.serve(async (req) => {
       if (hit) matched.push({ item: g, id: hit.id }); else missed.push(g.title);
       if (!hit) await admin.from('items').update({ extra: { ...(g.extra || {}), bgg_none: true } }).eq('id', g.id);
     }
-    const info = await things([...new Set(matched.map(m => m.id))]);
+    const info = await things([...new Set(matched.map(m => m.id))], new Map(matched.map(m => [m.id, m.item.pub_year])));
     let filled = 0;
     for (const { item, id } of matched) {
       const t = info.get(id); if (!t) { missed.push(item.title); continue; }
-      const extra = { ...(item.extra || {}), bgg: t.bgg, bigImg: t.image || undefined, bgg_info: true };
+      const extra = { ...(item.extra || {}), bgg: t.bgg, bigImg: t.image || undefined, bgg_info: true, fr_checked: true, fr: t.fr || undefined, publisher: t.publisher || undefined };
       if (!extra.players && t.players) extra.players = t.players;
       if (!extra.time && t.time) extra.time = String(t.time);
       if (!extra.age && t.age) extra.age = t.age;
