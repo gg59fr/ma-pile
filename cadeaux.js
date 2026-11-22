@@ -45,7 +45,8 @@ function render(){
     return `<li class="pub-row${taken ? ' taken' : ''}">
       <span class="mini m-${esc(it.type)}" style="--c:${T.c}">${it.photo ? `<img src="${esc(it.photo)}" alt="" loading="lazy">` : ''}</span>
       <span class="meta"><span class="t">${esc(it.title || 'Sans titre')}${it.detail ? ', ' + esc(it.detail) : ''}</span>
-        <span class="w">${T.label}${it.creator ? ' · ' + esc(it.creator) : ''}</span></span>
+        <span class="w">${T.label}${it.creator ? ' · ' + esc(it.creator) : ''}${it.price ? ' · environ ' + String(it.price).replace('.', ',') + ' €' : ''}</span>
+        ${/^https?:\/\//.test(it.link || '') ? `<a class="pub-link" href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">Voir le produit${it.site ? ' sur ' + esc(it.site) : ''}</a>` : ''}</span>
       <span class="pub-act">${action}</span></li>`;
   }).join('');
 }

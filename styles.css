@@ -283,8 +283,8 @@ img{max-width:100%}
 .plays output{min-width:2.5ch;text-align:center;font-family:var(--display);font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
 .big.own-big{background:var(--c-lego);color:var(--cover-light)}
 .big.soft{background:var(--surface);color:var(--ink);box-shadow:none;min-height:54px}
-.addto{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;margin-bottom:4px;border:2px solid var(--line);border-radius:12px;background:var(--bg)}
-.addmenu .addto button{min-height:42px;padding:0 8px;justify-content:center;gap:6px;border:none;border-radius:8px;font-size:13px;font-weight:600}
+.addto{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;margin-bottom:4px;border:2px solid var(--line);border-radius:12px;background:var(--bg)}
+.addmenu .addto button{min-height:42px;padding:0 6px;justify-content:center;gap:5px;border:none;border-radius:8px;font-size:13px;font-weight:600}
 .addmenu .addto button+button{border-top:none;border-radius:8px}
 .addmenu .addto button[aria-checked="true"]{background:var(--ink);color:var(--bg);font-weight:700}
 .addmenu .addto + button{border-top:none}
@@ -329,3 +329,17 @@ img{max-width:100%}
 .fun-card b{font-family:var(--display);font-size:22px;font-weight:800;line-height:1.05}
 .fun-card span{font-size:12px;font-weight:600;line-height:1.3}
 @media (max-width:360px){.fun{grid-template-columns:1fr}.stile b{font-size:22px}}
+
+/* Add from a link */
+.lk-row{display:flex;gap:8px}
+.lk-row input{flex:1;min-width:0}
+.lk-row .btn{flex:none;min-height:46px;padding:0 14px}
+.lk-pics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.lk-pic{aspect-ratio:1;padding:0;border:2px solid var(--line);border-radius:10px;background:#fff;overflow:hidden;cursor:pointer}
+.lk-pic img{width:100%;height:100%;object-fit:contain;display:block}
+.lk-pic[aria-checked="true"]{border-color:var(--ink);box-shadow:0 0 0 3px var(--accent)}
+.lk-pic.none{display:flex;align-items:center;justify-content:center;font:inherit;font-size:12px;font-weight:600;color:var(--muted);background:var(--surface)}
+.lk-pic.none[aria-checked="true"]{color:var(--ink)}
+.pub-link{display:inline-block;margin-top:2px;font-size:13px;font-weight:600;color:var(--ink);text-decoration:underline;text-underline-offset:2px}
+.chips.lk-wrap{flex-wrap:wrap;overflow:visible}
+#lkAdd,#lkGo{align-self:stretch;justify-content:center;width:100%;margin-top:4px}

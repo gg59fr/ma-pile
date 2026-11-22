@@ -214,3 +214,23 @@ grant execute on function public.app_secret(text) to service_role;
 
 -- The bgg-game edge function fills game images (photo, cover_from = 'bgg', extra.bgg / bigImg).
 grant select, update on public.items to service_role;
+
+-- Public gift list, with the product link (extra.url, kept when an entry is added from a link) and price.
+create or replace function public.gift_list(p_token text)
+returns json language sql stable security definer set search_path = ''
+as $$
+  select json_build_object(
+    'title', g.title,
+    'items', coalesce((
+      select json_agg(json_build_object(
+        'id', i.id, 'type', i.type, 'title', i.title, 'creator', i.creator,
+        'detail', i.detail, 'photo', i.photo, 'reserved', r.item_id is not null,
+        'link', case when i.extra->>'url' ~ '^https?://' then i.extra->>'url' end,
+        'site', i.extra->>'site', 'price', i.price)
+        order by i.created_at)
+      from public.items i
+      left join public.reservations r on r.item_id = i.id
+      where i.user_id = g.user_id and i.status = 'cadeau'), '[]'::json))
+  from public.gift_lists g
+  where g.token = p_token;
+$$;

@@ -264,7 +264,7 @@ function renderShelf(){
 /* ---------- fiche (sheet) ---------- */
 const find = id => state.items.find(i => i.id === id);
 function openSheet(id){
-  state.openId = id; state.delArmed = false; state.catalogOpen = state.accountOpen = state.gameSearchOpen = false;
+  state.openId = id; state.delArmed = false; state.catalogOpen = state.accountOpen = state.gameSearchOpen = state.linkOpen = false;
   const it = find(id); if (!it) return;
   const T = Object.keys(TYPES);
   $('sheet').innerHTML = `
@@ -289,6 +289,7 @@ function openSheet(id){
       <div class="field"><label for="fGenre">Genre</label><select id="fGenre"><option value="">À classer</option>${Object.entries(GENRES).map(([k, l]) => `<option value="${k}"${it.genre === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
     </div>
     <p class="sub publine" id="fPub"></p>
+    <p class="sub publine" id="fLink" hidden></p>
     <div class="field" id="fPriceRow"><label for="fPrice">Prix payé (€)</label><input id="fPrice" type="text" inputmode="decimal" autocomplete="off" placeholder="—" value="${it.price != null ? String(it.price).replace('.', ',') : ''}"></div>
     <div class="field"><span class="flabel" id="lType">Type</span>
       <div class="chips" role="group" aria-labelledby="lType" id="fType">${T.map(k => `<button type="button" class="chip" data-type="${k}" aria-pressed="${it.type === k}">${TYPES[k].label}</button>`).join('')}</div></div>
@@ -301,7 +302,7 @@ function openSheet(id){
   $('sClose').focus({preventScroll: true});
 }
 function closeSheet(){
-  if (state.accountOpen || state.catalogOpen || state.gameSearchOpen) { state.accountOpen = state.catalogOpen = state.gameSearchOpen = false; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = ''; return; }
+  if (state.accountOpen || state.catalogOpen || state.gameSearchOpen || state.linkOpen) { state.accountOpen = state.catalogOpen = state.gameSearchOpen = state.linkOpen = false; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = ''; return; }
   if (!state.openId) return;
   flushSave();
   const closed = state.openId;
@@ -335,13 +336,16 @@ function refreshSheet(){
   const canCover = !shown && (it.type === 'livre' || it.type === 'bd' || it.type === 'jeu');
   const fromWeb = it.photo && it.coverFrom && it.coverFrom !== 'none';
   $('sId').innerHTML = busy ? `<span class="busy"><span class="spin"></span>${busy}</span>`
-    : esc(state.idNote[it.id] || (fromWeb ? `Image trouvée en ligne (${({googlebooks: 'Google Books', rebrickable: 'catalogue Rebrickable', bgg: 'BoardGameGeek'})[it.coverFrom] || 'Open Library'}).` : ''))
+    : esc(state.idNote[it.id] || (fromWeb ? `Image trouvée en ligne (${({googlebooks: 'Google Books', rebrickable: 'catalogue Rebrickable', bgg: 'BoardGameGeek', link: 'sur la page du produit'})[it.coverFrom] || 'Open Library'}).` : ''))
       + (it.coverFrom === 'bgg' && it.extra && it.extra.bgg ? ` <a class="link inl" href="https://boardgamegeek.com/boardgame/${+it.extra.bgg}" target="_blank" rel="noopener">Voir sur BoardGameGeek</a>` : '')
       + (canCover ? ` <button type="button" class="link" data-act="cover" style="padding:4px 0">${it.type === 'jeu' ? 'Chercher une image' : 'Chercher une couverture'}</button>` : '')
       + (fromWeb ? ' <button type="button" class="link" data-act="uncover" style="padding:4px 0">Pas la bonne ? Retirer</button>' : '');
   document.querySelectorAll('#fType .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === it.type)));
   $('fBookRow').hidden = !isBook(it);
-  $('fPriceRow').hidden = !it.owned;
+  $('fPriceRow').querySelector('label').textContent = it.owned ? 'Prix payé (€)' : 'Prix (€)';
+  const link = it.extra && /^https?:\/\//.test(it.extra.url || '') ? it.extra.url : '';
+  $('fLink').innerHTML = link ? `<a class="link inl" href="${esc(link)}" target="_blank" rel="noopener">Voir la page${it.extra.site ? ' sur ' + esc(it.extra.site) : ''}</a>` : '';
+  $('fLink').hidden = !link;
   const pub = [it.pubYear && `Paru en ${it.pubYear}`, it.publisher].filter(Boolean).join(' · ');
   $('fPub').textContent = pub; $('fPub').hidden = !pub || !isBook(it);
   const chev = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
@@ -488,12 +492,14 @@ function newBase(id, extra){
   const now = Date.now(), toCol = state.addTo === 'collection';
   const f = toCol ? state.colFilter : state.filter;
   return { id, type: TYPES[f] ? f : 'livre', owned: toCol, ownedAt: toCol ? now : null,
-    status: toCol ? 'collection' : (state.view === 'envies' && state.envTab === 'gifts' ? 'cadeau' : 'pile'),
+    status: toCol ? 'collection' : state.addTo === 'cadeau' ? 'cadeau' : 'pile',
     title: '', creator: '', detail: '', note: '', photo: null, plays: 0, extra: {}, createdAt: now, updatedAt: now, ...extra };
 }
 function showTarget(){
-  if (state.addTo === 'collection') { if (state.view !== 'collection') setView('collection'); }
-  else if (state.view !== 'envies') setView('envies');
+  if (state.addTo === 'collection') { if (state.view !== 'collection') setView('collection'); return; }
+  if (state.view !== 'envies') setView('envies');
+  const tab = state.addTo === 'cadeau' ? 'gifts' : 'buy';
+  if (state.envTab !== tab) setEnvTab(tab);
 }
 function addManual(){
   const id = store.newId();
@@ -1123,11 +1129,12 @@ document.addEventListener('click', e => {
     const gone = find(id); pendingNew.delete(id); state.items = state.items.filter(i => i.id !== id); store.remove(id, gone && gone.photo).catch(() => toast('Suppression impossible. Réessaie.')); renderAll(); toast('Fiche supprimée'); }
 });
 function setAddTo(to){
-  state.addTo = to === 'envie' ? 'envie' : 'collection';
+  state.addTo = ['envie', 'cadeau'].includes(to) ? to : 'collection';
   document.querySelectorAll('[data-to]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.to === state.addTo)));
 }
+const ADDED_TO = { collection: 'à ta collection', envie: 'à tes envies', cadeau: 'à ta liste cadeaux' };
 function setMenu(open){
-  if (open) setAddTo(state.view === 'envies' ? 'envie' : 'collection');
+  if (open) setAddTo(state.view === 'envies' ? (state.envTab === 'gifts' ? 'cadeau' : 'envie') : 'collection');
   $('addMenu').hidden = !open; $('fab').setAttribute('aria-expanded', String(open));
   if (open) $('addMenu').querySelector('[data-add]').focus({preventScroll: true});
 }
@@ -1139,6 +1146,7 @@ $('addMenu').addEventListener('click', e => {
   if (b.dataset.add === 'scan') openScanner();
   else if (b.dataset.add === 'lego') openCatalog();
   else if (b.dataset.add === 'bgg') openGameSearch();
+  else if (b.dataset.add === 'link') openLinkSheet();
   else if (b.dataset.add === 'cam') $('cam').click(); else if (b.dataset.add === 'lib') $('lib').click(); else addManual();
 });
 document.addEventListener('pointerdown', e => { if (!$('addMenu').hidden && !e.target.closest('#addMenu, #fab')) setMenu(false); });
@@ -1153,7 +1161,7 @@ let lbReturn = null;
 function openPhoto(src, from){ lbReturn = from || null; const big = RB_THUMB.exec(src || ''); $('lbImg').src = big ? `${big[1]}/1000x800p.jpg` : src; $('lightbox').hidden = false; $('lbClose').focus({preventScroll: true}); }
 function closePhoto(){ if ($('lightbox').hidden) return false; $('lightbox').hidden = true; $('lbImg').removeAttribute('src'); if (lbReturn && document.contains(lbReturn)) lbReturn.focus({preventScroll: true}); lbReturn = null; return true; }
 $('lightbox').addEventListener('click', e => { e.stopPropagation(); closePhoto(); });
-document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('scanner').hidden) { closeScanner(); return; } if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen || state.catalogOpen || state.gameSearchOpen) closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('scanner').hidden) { closeScanner(); return; } if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen || state.catalogOpen || state.gameSearchOpen || state.linkOpen) closeSheet(); });
 window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
 $('copyGifts').onclick = () => {
   const text = giftText(), ta = $('giftText');
@@ -1456,13 +1464,14 @@ function renderCatalog(){
   }).join('');
 }
 function catAdd(setNum, to){
+  if (to === 'envie' && state.addTo === 'cadeau') to = 'cadeau';
   const l = cat.rows.find(r => r.set_num === setNum); if (!l || !store) return;
   const prev = state.addTo; state.addTo = to;
   const id = store.newId(), base = newBase(id);
   state.addTo = prev;
   createItem({ ...base, type: 'lego', ...legoFields(l) });
   renderAll(); renderCatalog();
-  toast(to === 'collection' ? `${l.name} ajouté à ta collection` : `${l.name} ajouté à tes envies`);
+  toast(`${l.name} ajouté ${ADDED_TO[to]}`);
 }
 $('sheet').addEventListener('input', e => { if (e.target.id === 'catQ') { cat.q = e.target.value; if (cat.q.trim()) cat.theme = ''; clearTimeout(cat.timer); cat.timer = setTimeout(catSearch, 250); } });
 $('sheet').addEventListener('click', e => {
@@ -1526,13 +1535,14 @@ function renderGameSearch(){
   }).join('') + manual;
 }
 function gameAdd(bggId, to){
+  if (to === 'envie' && state.addTo === 'cadeau') to = 'cadeau';
   const g = gs.rows.find(r => String(r.bgg) === String(bggId)); if (!g || !store) return;
   const prev = state.addTo; state.addTo = to;
   const id = store.newId(), base = newBase(id);
   state.addTo = prev;
   createItem({ ...base, type: 'jeu', ...gameFields(g) });
   renderAll(); renderGameSearch();
-  toast(to === 'collection' ? `${g.name} ajouté à ta collection` : `${g.name} ajouté à tes envies`);
+  toast(`${g.name} ajouté ${ADDED_TO[to]}`);
 }
 function gameManual(){
   const title = gs.q.trim(); if (!title || !store) return;
@@ -1545,6 +1555,120 @@ $('sheet').addEventListener('click', e => {
   const add = e.target.closest('[data-gsadd]'); if (add) { gameAdd(add.dataset.gsadd, add.dataset.gsto); return; }
   if (e.target.closest('[data-gsmanual]')) gameManual();
 });
+
+/* ---------- Add from a link ----------
+   The link-preview server function reads the product page (the phone's browser may not read other
+   sites): suggested title, brand, price and the page's pictures. The chosen picture is copied into
+   our own storage, shrunk like a photo, so it stays even if the shop changes its page. */
+const lk = { url: '', busy: false, data: null, pic: 0, type: 'objet', err: '', bad: new Set() };
+const LK_ERR = { bad_url: 'Ce n’est pas une adresse de page web valide.', timeout: 'La page met trop de temps à répondre. Réessaie.', unreachable: 'La page ne répond pas. Vérifie l’adresse.' };
+function openLinkSheet(prefill){
+  if (!sb) return;
+  state.linkOpen = true;
+  Object.assign(lk, { url: prefill || '', busy: false, data: null, pic: 0, type: 'objet', err: '', bad: new Set() });
+  $('sheet').innerHTML = `
+    <div class="sheet-bar"><h2 id="sheetTitle">Ajouter depuis un lien</h2>
+      <button type="button" class="iconbtn" id="sClose" aria-label="Fermer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div class="field"><label for="lkUrl">Adresse de la page du produit</label>
+      <div class="lk-row"><input id="lkUrl" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…" value="${esc(lk.url)}">
+        <button type="button" class="btn" id="lkPaste">Coller</button></div></div>
+    <button type="button" class="btn sun" id="lkGo">Lire la page</button>
+    <div id="lkOut" aria-live="polite" style="display:flex;flex-direction:column;gap:14px"></div>`;
+  $('sheetWrap').hidden = false; document.body.style.overflow = 'hidden';
+  if (prefill) linkRead(); else setTimeout(() => $('lkUrl') && $('lkUrl').focus({preventScroll: true}), 60);
+}
+async function linkRead(){
+  const raw = ($('lkUrl').value || '').trim();
+  const m = raw.match(/https?:\/\/\S+/i);                 // shared text often wraps the address in a sentence
+  const url = m ? m[0] : raw && !/\s/.test(raw) && raw.includes('.') ? 'https://' + raw.replace(/^\/+/, '') : '';
+  if (!url) { lk.err = 'Colle l’adresse de la page du produit (elle commence par https://).'; renderLink(); return; }
+  $('lkUrl').value = lk.url = url;
+  lk.busy = true; lk.err = ''; lk.data = null; renderLink();
+  let r = null;
+  try { const { data } = await sb.functions.invoke('link-preview', { body: { url } }); r = data; } catch (e) {}
+  lk.busy = false;
+  if (!r || r.error) { lk.err = (r && LK_ERR[r.error]) || (navigator.onLine ? 'Lecture impossible pour le moment. Réessaie.' : 'Pas de connexion.'); renderLink(); return; }
+  lk.data = r; lk.bad = new Set(); lk.pic = r.images && r.images.length ? 0 : -1;
+  lk.type = /lego\./.test(r.url) ? 'lego' : 'objet';
+  renderLink();
+}
+function renderLink(){
+  const out = $('lkOut'); if (!out) return;
+  $('lkGo').disabled = lk.busy;
+  if (lk.busy) { out.innerHTML = '<p class="busy"><span class="spin"></span>Lecture de la page…</p>'; return; }
+  if (lk.err) { out.innerHTML = `<p class="sub">${esc(lk.err)}</p>`; return; }
+  const d = lk.data; if (!d) { out.innerHTML = ''; return; }
+  const pics = d.images || [];
+  const where = { collection: 'Ma collection', envie: 'Mes envies', cadeau: 'Liste cadeaux' };
+  const T = ['objet', 'livre', 'bd', 'jeu', 'lego'];
+  out.innerHTML = `
+    ${d.blocked ? `<p class="sub">Ce site ne laisse pas lire sa page : le titre vient de l’adresse. Ajoute une photo ensuite si tu veux.</p>` : ''}
+    ${pics.length ? `<div class="field"><span class="flabel" id="lkPicL">Image${pics.length > 1 ? ' (touche la plus représentative)' : ''}</span>
+      <div class="lk-pics" role="radiogroup" aria-labelledby="lkPicL">${pics.map((src, i) => `<button type="button" role="radio" class="lk-pic" data-pic="${i}" aria-checked="${lk.pic === i}" aria-label="Image ${i + 1}"${lk.bad.has(i) ? ' hidden' : ''}><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}
+        <button type="button" role="radio" class="lk-pic none" data-pic="-1" aria-checked="${lk.pic === -1}">Sans image</button></div></div>` : ''}
+    <div class="field"><label for="lkTitle">Titre</label><input id="lkTitle" type="text" autocomplete="off" value="${esc(d.title || '')}" placeholder="Nom de l’objet"></div>
+    <div class="two">
+      <div class="field"><label for="lkBrand">Marque</label><input id="lkBrand" type="text" autocomplete="off" value="${esc(d.brand || '')}" placeholder="—"></div>
+      <div class="field"><label for="lkPrice">Prix (€)</label><input id="lkPrice" type="text" inputmode="decimal" autocomplete="off" value="${d.price != null && (!d.currency || d.currency === 'EUR') ? String(d.price).replace('.', ',') : ''}" placeholder="—"></div>
+    </div>
+    <div class="field"><span class="flabel" id="lkTypeL">Type</span><div class="chips lk-wrap" role="group" aria-labelledby="lkTypeL">${T.map(k => `<button type="button" class="chip" data-lktype="${k}" aria-pressed="${lk.type === k}">${TYPES[k].label}</button>`).join('')}</div></div>
+    <div class="field"><span class="flabel" id="lkToL">Ajouter à</span><div class="chips lk-wrap" role="radiogroup" aria-labelledby="lkToL">${Object.entries(where).map(([k, l]) => `<button type="button" class="chip" role="radio" data-lkto="${k}" aria-checked="${state.addTo === k}" aria-pressed="${state.addTo === k}">${l}</button>`).join('')}</div></div>
+    <button type="button" class="btn sun" id="lkAdd">Ajouter ${ADDED_TO[state.addTo]}</button>
+    <p class="chart-note">Lu sur ${esc(d.site || new URL(d.url).hostname)}. Le lien est gardé dans la fiche${state.addTo === 'cadeau' ? ' et visible sur ta liste cadeaux' : ''}.</p>`;
+}
+async function linkAdd(){
+  const d = lk.data; if (!d || !store) return;
+  const title = ($('lkTitle').value || '').trim();
+  if (!title) { $('lkTitle').focus(); toast('Donne un titre à la fiche.'); return; }
+  const pv = parseFloat(String($('lkPrice').value).replace(/\s|€/g, '').replace(',', '.'));
+  const id = store.newId();
+  const it = { ...newBase(id), type: lk.type, title, creator: ($('lkBrand').value || '').trim(),
+    price: pv >= 0 && pv <= 100000 ? Math.round(pv * 100) / 100 : null, extra: { url: d.url, site: d.site || '' } };
+  const pic = lk.pic >= 0 ? (d.images || [])[lk.pic] : null;
+  createItem(it);
+  state.linkOpen = false; $('sheetWrap').hidden = true; document.body.style.overflow = '';
+  showTarget(); renderAll();
+  toast(`Ajouté ${ADDED_TO[state.addTo]}`);
+  if (!pic) return;
+  state.identifying.add(id); renderAll();
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/link-preview`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: CONFIG.SUPABASE_ANON_KEY, Authorization: `Bearer ${session ? session.access_token : CONFIG.SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ image: pic, page: d.url }) });
+    if (!res.ok || !/^image\//.test(res.headers.get('content-type') || '')) throw new Error('image');
+    const url = await store.uploadPhoto(await compress(await res.blob()));
+    if (find(id)) save(id, { photo: url, coverFrom: 'link' });
+  } catch (e) {
+    // The shop's own picture as a last resort: it shows as long as the shop keeps it online.
+    if (find(id)) save(id, { photo: pic, coverFrom: 'link' });
+  } finally { state.identifying.delete(id); renderAll(); }
+}
+$('sheet').addEventListener('click', async e => {
+  if (!state.linkOpen) return;
+  if (e.target.closest('#lkGo')) { linkRead(); return; }
+  if (e.target.closest('#lkAdd')) { linkAdd(); return; }
+  if (e.target.closest('#lkPaste')) {
+    try { const t = await navigator.clipboard.readText(); if (t) { $('lkUrl').value = t.trim(); linkRead(); } }
+    catch (err) { $('lkUrl').focus(); toast('Touche le champ puis « Coller ».'); }
+    return;
+  }
+  const keep = () => { const t = $('lkTitle'), b = $('lkBrand'), p = $('lkPrice'); return t ? [t.value, b.value, p.value] : null; };
+  const restore = v => { if (v) { $('lkTitle').value = v[0]; $('lkBrand').value = v[1]; $('lkPrice').value = v[2]; } };
+  const pic = e.target.closest('[data-pic]'); if (pic) { const v = keep(); lk.pic = +pic.dataset.pic; renderLink(); restore(v); return; }
+  const ty = e.target.closest('[data-lktype]'); if (ty) { const v = keep(); lk.type = ty.dataset.lktype; renderLink(); restore(v); return; }
+  const to = e.target.closest('[data-lkto]'); if (to) { const v = keep(); setAddTo(to.dataset.lkto); renderLink(); restore(v); }
+});
+// A shop picture that does not load is hidden; if it was the chosen one, the next good one is chosen.
+$('sheet').addEventListener('error', e => {
+  const b = e.target.tagName === 'IMG' && e.target.closest('.lk-pic'); if (!b) return;
+  const i = +b.dataset.pic; lk.bad.add(i); b.hidden = true;
+  if (lk.pic === i) {
+    const n = (lk.data.images || []).findIndex((_, k) => !lk.bad.has(k));
+    lk.pic = n; document.querySelectorAll('.lk-pic').forEach(x => x.setAttribute('aria-checked', String(+x.dataset.pic === n)));
+  }
+}, true);
+$('sheet').addEventListener('keydown', e => { if (e.target.id === 'lkUrl' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); linkRead(); } });
 
 /* ---------- account + backup ---------- */
 const USER_SVG = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>';
