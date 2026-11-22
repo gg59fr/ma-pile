@@ -343,3 +343,4 @@ img{max-width:100%}
 .pub-link{display:inline-block;margin-top:2px;font-size:13px;font-weight:600;color:var(--ink);text-decoration:underline;text-underline-offset:2px}
 .chips.lk-wrap{flex-wrap:wrap;overflow:visible}
 #lkAdd,#lkGo{align-self:stretch;justify-content:center;width:100%;margin-top:4px}
+.lk-row a.btn{display:inline-flex;align-items:center;color:var(--ink);text-decoration:none}

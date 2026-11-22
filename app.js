@@ -234,11 +234,11 @@ function renderGifts(){
   $('giftList').innerHTML = !state.ready ? '' : g.length ? g.map(it => `<li><button type="button" class="rowitem" data-open="${esc(it.id)}">
       <span class="mini m-${esc(it.type)}" style="--c:${TYPES[it.type]?.c || TYPES.livre.c}">${it.photo ? `<img src="${esc(it.photo)}" alt="">` : ''}</span>
       <span class="meta"><span class="t">${esc(titleOf(it))}${it.detail ? ', ' + esc(it.detail) : ''}</span>
-      <span class="w">${TYPES[it.type]?.label || ''}${it.creator ? ' · ' + esc(it.creator) : ''}</span></span></button></li>`).join('')
+      <span class="w">${TYPES[it.type]?.label || ''}${it.creator ? ' · ' + esc(it.creator) : ''}${it.extra && it.extra.url ? ' · lien ' + esc(it.extra.site || 'web') : ''}</span></span></button></li>`).join('')
     : `<li class="empty"><strong>Liste vide</strong>Depuis la fiche d’une envie, choisis « Mettre dans ma liste cadeaux ».</li>`;
 }
 function giftText(){
-  return 'Ma liste cadeaux\n' + giftLines().map(it => `• ${titleOf(it)}${it.detail ? ', ' + it.detail : ''} (${TYPES[it.type]?.label || ''}${it.creator ? ', ' + it.creator : ''})`).join('\n');
+  return 'Ma liste cadeaux\n' + giftLines().map(it => `• ${titleOf(it)}${it.detail ? ', ' + it.detail : ''} (${TYPES[it.type]?.label || ''}${it.creator ? ', ' + it.creator : ''})${it.extra && it.extra.url ? '\n  ' + it.extra.url : ''}`).join('\n');
 }
 
 function renderShelf(){
@@ -289,7 +289,9 @@ function openSheet(id){
       <div class="field"><label for="fGenre">Genre</label><select id="fGenre"><option value="">À classer</option>${Object.entries(GENRES).map(([k, l]) => `<option value="${k}"${it.genre === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
     </div>
     <p class="sub publine" id="fPub"></p>
-    <p class="sub publine" id="fLink" hidden></p>
+    <div class="field"><label for="fLink">Lien (où le trouver)</label>
+      <div class="lk-row"><input id="fLink" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://… (affiché sur ta liste cadeaux)" value="${esc((it.extra && it.extra.url) || '')}">
+        <a class="btn" id="fLinkGo" target="_blank" rel="noopener" hidden>Ouvrir</a></div></div>
     <div class="field" id="fPriceRow"><label for="fPrice">Prix payé (€)</label><input id="fPrice" type="text" inputmode="decimal" autocomplete="off" placeholder="—" value="${it.price != null ? String(it.price).replace('.', ',') : ''}"></div>
     <div class="field"><span class="flabel" id="lType">Type</span>
       <div class="chips" role="group" aria-labelledby="lType" id="fType">${T.map(k => `<button type="button" class="chip" data-type="${k}" aria-pressed="${it.type === k}">${TYPES[k].label}</button>`).join('')}</div></div>
@@ -343,9 +345,7 @@ function refreshSheet(){
   document.querySelectorAll('#fType .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === it.type)));
   $('fBookRow').hidden = !isBook(it);
   $('fPriceRow').querySelector('label').textContent = it.owned ? 'Prix payé (€)' : 'Prix (€)';
-  const link = it.extra && /^https?:\/\//.test(it.extra.url || '') ? it.extra.url : '';
-  $('fLink').innerHTML = link ? `<a class="link inl" href="${esc(link)}" target="_blank" rel="noopener">Voir la page${it.extra.site ? ' sur ' + esc(it.extra.site) : ''}</a>` : '';
-  $('fLink').hidden = !link;
+  linkButton();
   const pub = [it.pubYear && `Paru en ${it.pubYear}`, it.publisher].filter(Boolean).join(' · ');
   $('fPub').textContent = pub; $('fPub').hidden = !pub || !isBook(it);
   const chev = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
@@ -368,20 +368,35 @@ function refreshSheet(){
 }
 
 let saveTimer = null;
+// The sheet's link field: "amazon.fr/…" becomes "https://amazon.fr/…"; something that is not an address is ignored.
+function typedLink(){
+  const raw = ($('fLink') && $('fLink').value || '').trim();
+  if (!raw) return '';
+  const m = raw.match(/https?:\/\/\S+/i), u = m ? m[0] : /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(raw) ? 'https://' + raw : null;
+  try { return u && new URL(u).hostname.includes('.') ? u.slice(0, 2000) : null; } catch (e) { return null; }
+}
+function linkButton(){
+  const a = $('fLinkGo'); if (!a) return;
+  const u = typedLink(); a.hidden = !u; if (u) a.href = u;
+}
 function formPatch(){
   if (!state.openId || !$('fTitle')) return {};
   const pg = parseInt($('fPages').value, 10);
+  const cur = find(state.openId), ex = { ...((cur && cur.extra) || {}) }, link = typedLink();
+  if (link === '') { delete ex.url; delete ex.site; }
+  else if (link && link !== ex.url) { ex.url = link; ex.site = new URL(link).hostname.replace(/^www\./, ''); }
   return { title: $('fTitle').value.trim().slice(0, 200), creator: $('fCreator').value.trim().slice(0, 200),
     detail: $('fDetail').value.trim().slice(0, 80), note: $('fNote').value.slice(0, 2000),
     pages: pg > 0 && pg <= 20000 ? pg : null, genre: GENRES[$('fGenre').value] ? $('fGenre').value : null,
-    price: (() => { const v = parseFloat(String($('fPrice').value).replace(/\s|€/g, '').replace(',', '.')); return v >= 0 && v <= 100000 ? Math.round(v * 100) / 100 : null; })() };
+    price: (() => { const v = parseFloat(String($('fPrice').value).replace(/\s|€/g, '').replace(',', '.')); return v >= 0 && v <= 100000 ? Math.round(v * 100) / 100 : null; })(),
+    extra: ex };
 }
 function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 600); }
 function flushSave(){
   clearTimeout(saveTimer); saveTimer = null;
   const it = state.openId && find(state.openId); if (!it || !$('fTitle')) return;
   const p = formPatch();
-  if (['title','creator','detail','note','pages','genre','price'].every(k => String(it[k] ?? '') === String(p[k] ?? ''))) return;
+  if (['title','creator','detail','note','pages','genre','price'].every(k => String(it[k] ?? '') === String(p[k] ?? '')) && ((it.extra && it.extra.url) || '') === (p.extra.url || '')) return;
   const next = {...it, ...p, updatedAt: Date.now()};
   Object.assign(it, p);
   put(it.id, next);
@@ -1155,7 +1170,8 @@ $('q').oninput = e => { state.q = e.target.value; renderPile(); };
 $('cq').oninput = e => { state.cq = e.target.value; renderCollection(); };
 $('sheetWrap').addEventListener('click', e => { if (e.target === $('sheetWrap')) closeSheet(); });
 $('sheet').addEventListener('change', e => { if (e.target.id === 'fDetail' && state.openId) { const it = find(state.openId); if (it && it.type === 'lego') { flushSave(); legoEnrich(state.openId); } } });
-$('sheet').addEventListener('input', e => { if (['fTitle','fCreator','fDetail','fNote','fPages','fGenre','fPrice'].includes(e.target.id)) { scheduleSave(); $('sheetTitle').textContent = $('fTitle').value.trim() || 'Nouvelle envie'; $('sCreator').textContent = $('fCreator').value; } });
+$('sheet').addEventListener('input', e => { if (e.target.id === 'fLink') linkButton();
+  if (['fTitle','fCreator','fDetail','fNote','fPages','fGenre','fPrice','fLink'].includes(e.target.id)) { scheduleSave(); $('sheetTitle').textContent = $('fTitle').value.trim() || 'Nouvelle envie'; $('sCreator').textContent = $('fCreator').value; } });
 $('sheet').addEventListener('click', e => { if (e.target.closest('#sClose')) closeSheet(); if (e.target.closest('#sPhoto')) { flushSave(); state.camTarget = state.openId; $('lib').click(); } });
 let lbReturn = null;
 function openPhoto(src, from){ lbReturn = from || null; const big = RB_THUMB.exec(src || ''); $('lbImg').src = big ? `${big[1]}/1000x800p.jpg` : src; $('lightbox').hidden = false; $('lbClose').focus({preventScroll: true}); }
