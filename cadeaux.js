@@ -14,6 +14,7 @@ const sb = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, { auth: {
 const token = decodeURIComponent(location.hash.slice(1));
 const MINE_KEY = 'mapile-resa-' + token;
 let mine = {}, list = null, busy = new Set();
+const opened = new Set();     // rows whose drawer is open
 try { mine = JSON.parse(localStorage.getItem(MINE_KEY) || '{}'); } catch (e) {}
 const saveMine = () => { try { localStorage.setItem(MINE_KEY, JSON.stringify(mine)); } catch (e) {} };
 
@@ -42,13 +43,36 @@ function render(){
       ? `<span class="pub-state ok">Tu l’offres</span><button type="button" class="link" data-cancel="${esc(it.id)}"${wait ? ' disabled' : ''}>Annuler</button>`
       : taken ? `<span class="pub-state">Déjà réservé</span>`
       : `<button type="button" class="btn sun pub-btn" data-take="${esc(it.id)}"${wait ? ' disabled' : ''}>${wait ? 'Un instant…' : 'Je l’offre'}</button>`;
-    return `<li class="pub-row${taken ? ' taken' : ''}">
-      <span class="mini m-${esc(it.type)}" style="--c:${T.c}">${it.photo ? `<img src="${esc(it.photo)}" alt="" loading="lazy">` : ''}</span>
-      <span class="meta"><span class="t">${esc(it.title || 'Sans titre')}${it.detail ? ', ' + esc(it.detail) : ''}</span>
-        <span class="w">${T.label}${it.creator ? ' · ' + esc(it.creator) : ''}${it.price ? ' · environ ' + String(it.price).replace('.', ',') + ' €' : ''}</span>
-        ${/^https?:\/\//.test(it.link || '') ? `<a class="pub-link" href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">Voir le produit${it.site ? ' sur ' + esc(it.site) : ''}</a>` : ''}</span>
-      <span class="pub-act">${action}</span></li>`;
+    const drawer = drawerHTML(it), open = !!drawer && opened.has(it.id), did = 'd-' + esc(it.id);
+    const head = `<span class="mini m-${esc(it.type)}" style="--c:${T.c}">${it.photo ? `<img src="${esc(it.photo)}" alt="" loading="lazy">` : ''}</span>
+        <span class="meta"><span class="t">${esc(it.title || 'Sans titre')}${it.detail ? ', ' + esc(it.detail) : ''}</span>
+          <span class="w">${T.label}${it.creator ? ' · ' + esc(it.creator) : ''}${it.price ? ' · environ ' + euros(it.price) : ''}${it.note ? ' · un mot' : ''}${it.link ? ' · lien' : ''}</span></span>`;
+    return `<li class="pub-item${taken ? ' taken' : ''}${open ? ' open' : ''}">
+      <div class="pub-row">
+        ${drawer ? `<button type="button" class="pub-tog" data-tog="${esc(it.id)}" aria-expanded="${open}" aria-controls="${did}">${head}
+          <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>`
+          : `<div class="pub-tog">${head}</div>`}
+        <span class="pub-act">${action}</span>
+      </div>
+      ${drawer ? `<div class="drawer" id="${did}"${open ? '' : ' hidden'}>${drawer}</div>` : ''}</li>`;
   }).join('');
+}
+const euros = n => (Math.round(n * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }) + ' €';
+// What the drawer shows: larger picture, the list owner's note, price, facts and the shop link.
+function drawerHTML(it){
+  const i = it.info || {};
+  const facts = [
+    i.players && `${esc(i.players)} joueurs`, i.time && `${esc(i.time)} min`, i.age && `dès ${esc(i.age)} ans`,
+    i.pieces && `${Number(i.pieces).toLocaleString('fr-FR')} pièces`, i.set && `set ${esc(String(i.set).replace(/-1$/, ''))}`,
+    i.pages && `${esc(i.pages)} pages`, i.publisher && `éd. ${esc(i.publisher)}`, i.year && esc(i.year),
+  ].filter(Boolean);
+  const link = /^https?:\/\//.test(it.link || '') ? it.link : '';
+  if (!it.note && !it.price && !link && !facts.length && !it.photo) return '';
+  const pic = it.big || it.photo;
+  return `${pic ? `<img class="big" src="${esc(pic)}" alt="" loading="lazy">` : ''}
+    ${it.note ? `<p class="d-note"><span class="d-lbl">Le petit mot</span>${esc(it.note)}</p>` : ''}
+    ${it.price || facts.length ? `<p class="d-facts">${it.price ? `<strong>Environ ${euros(it.price)}</strong>` : ''}${facts.map(f => `<span>${f}</span>`).join('')}</p>` : ''}
+    ${link ? `<a class="btn d-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Voir le produit${it.site ? ' sur ' + esc(it.site) : ''}</a>` : ''}`;
 }
 
 async function load(){
@@ -64,6 +88,8 @@ async function load(){
 function fail(msg){ $('pSub').textContent = msg; $('pList').innerHTML = ''; $('pInfo').hidden = true; }
 
 $('pList').addEventListener('click', async e => {
+  const tog = e.target.closest('[data-tog]');
+  if (tog) { const id = tog.dataset.tog; opened.has(id) ? opened.delete(id) : opened.add(id); render(); return; }
   const take = e.target.closest('[data-take]'), cancel = e.target.closest('[data-cancel]');
   const id = take ? take.dataset.take : cancel ? cancel.dataset.cancel : null;
   if (!id || busy.has(id)) return;

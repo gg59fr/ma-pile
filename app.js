@@ -37,7 +37,7 @@ const ago = ms => { if (!ms) return ''; const d = Math.floor((Date.now() - ms) /
   if (d < 1) return 'Ajouté aujourd’hui'; if (d < 7) return `Ajouté il y a ${d} j`;
   if (d < 60) return `Ajouté il y a ${Math.floor(d / 7)} sem.`; return `Ajouté il y a ${Math.floor(d / 30)} mois`; };
 
-const state = { items: [], ready: false, view: 'collection', filter: 'all', q: '', shelf: 'termine', colFilter: 'all', cq: '', envTab: 'buy', addTo: 'collection',
+const state = { items: [], giftOpen: new Set(), ready: false, view: 'collection', filter: 'all', q: '', shelf: 'termine', colFilter: 'all', cq: '', envTab: 'buy', addTo: 'collection',
   openId: null, identifying: new Set(), idNote: {}, previews: {}, coverBusy: new Set(), coverTried: {}, camTarget: null, delArmed: false, accountOpen: false, catalogOpen: false };
 let store = null, sb = null, user = null;
 const pendingNew = new Map();
@@ -231,11 +231,30 @@ function renderGifts(){
   const g = giftLines();
   $('giftCount').textContent = `${g.length} envie${g.length > 1 ? 's' : ''}`;
   $('copyGifts').disabled = !g.length;
-  $('giftList').innerHTML = !state.ready ? '' : g.length ? g.map(it => `<li><button type="button" class="rowitem" data-open="${esc(it.id)}">
-      <span class="mini m-${esc(it.type)}" style="--c:${TYPES[it.type]?.c || TYPES.livre.c}">${it.photo ? `<img src="${esc(it.photo)}" alt="">` : ''}</span>
-      <span class="meta"><span class="t">${esc(titleOf(it))}${it.detail ? ', ' + esc(it.detail) : ''}</span>
-      <span class="w">${TYPES[it.type]?.label || ''}${it.creator ? ' · ' + esc(it.creator) : ''}${it.extra && it.extra.url ? ' · lien ' + esc(it.extra.site || 'web') : ''}</span></span></button></li>`).join('')
+  $('giftList').innerHTML = !state.ready ? '' : g.length ? g.map(it => {
+      const open = state.giftOpen.has(it.id), did = 'gd-' + esc(it.id);
+      return `<li class="pub-item g-item${open ? ' open' : ''}"><div class="pub-row">
+      <button type="button" class="pub-tog" data-gtog="${esc(it.id)}" aria-expanded="${open}" aria-controls="${did}">
+        <span class="mini m-${esc(it.type)}" style="--c:${TYPES[it.type]?.c || TYPES.livre.c}">${it.photo ? `<img src="${esc(it.photo)}" alt="">` : ''}</span>
+        <span class="meta"><span class="t">${esc(titleOf(it))}${it.detail ? ', ' + esc(it.detail) : ''}</span>
+        <span class="w">${TYPES[it.type]?.label || ''}${it.creator ? ' · ' + esc(it.creator) : ''}${it.price ? ' · ' + euros(it.price) : ''}${(it.note || '').trim() ? ' · un mot' : ''}${it.extra && it.extra.url ? ' · lien' : ''}</span></span>
+        <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></div>
+      <div class="drawer" id="${did}"${open ? '' : ' hidden'}>${open ? giftDrawer(it) : ''}</div></li>`; }).join('')
     : `<li class="empty"><strong>Liste vide</strong>Depuis la fiche d’une envie, choisis « Mettre dans ma liste cadeaux ».</li>`;
+}
+// Drawer of a gift row: what your guests see on the shared list (note, price, facts, link), plus the full sheet.
+function giftDrawer(it){
+  const x = it.extra || {};
+  const facts = [x.players && `${esc(x.players)} joueurs`, x.time && `${esc(x.time)} min`, x.age && `dès ${+x.age} ans`,
+    x.pieces && `${Number(x.pieces).toLocaleString('fr-FR')} pièces`, x.set && `set ${esc(String(x.set).replace(/-1$/, ''))}`,
+    it.pages && `${it.pages} pages`, x.publisher && `éd. ${esc(x.publisher)}`, it.pubYear && it.pubYear].filter(Boolean);
+  const link = /^https?:\/\//.test(x.url || '') ? x.url : '';
+  const pic = (it.coverFrom === 'bgg' && x.bigImg) || it.photo;
+  return `${pic ? `<img class="big" src="${esc(pic)}" alt="" loading="lazy">` : ''}
+    ${(it.note || '').trim() ? `<p class="d-note"><span class="d-lbl">Ton mot (visible par tes proches)</span>${esc(it.note.trim())}</p>` : `<p class="sub">Pas de mot pour tes proches : ajoute-le dans la Note de la fiche.</p>`}
+    ${it.price || facts.length ? `<p class="d-facts">${it.price ? `<strong>Environ ${euros(it.price)}</strong>` : ''}${facts.map(f => `<span>${f}</span>`).join('')}</p>` : ''}
+    <div class="d-btns">${link ? `<a class="btn d-link" href="${esc(link)}" target="_blank" rel="noopener">Voir le produit${x.site ? ' sur ' + esc(x.site) : ''}</a>` : ''}
+      <button type="button" class="btn d-open" data-open="${esc(it.id)}">Modifier la fiche</button></div>`;
 }
 function giftText(){
   return 'Ma liste cadeaux\n' + giftLines().map(it => `• ${titleOf(it)}${it.detail ? ', ' + it.detail : ''} (${TYPES[it.type]?.label || ''}${it.creator ? ', ' + it.creator : ''})${it.extra && it.extra.url ? '\n  ' + it.extra.url : ''}`).join('\n');
@@ -1109,6 +1128,7 @@ $('grBox').addEventListener('click', e => { const b = e.target.closest('[data-gr
 /* ---------- events ---------- */
 document.addEventListener('click', e => {
   const t = e.target.closest('button'); if (!t) return;
+  if (t.dataset.gtog) { const id = t.dataset.gtog; state.giftOpen.has(id) ? state.giftOpen.delete(id) : state.giftOpen.add(id); renderGifts(); return; }
   if (t.dataset.open) { openSheet(t.dataset.open); return; }
   if (t.dataset.go) { setView(t.dataset.go); return; }
   if (t.dataset.filter) { state.filter = t.dataset.filter; renderPile(); return; }

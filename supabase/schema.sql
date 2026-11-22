@@ -234,3 +234,29 @@ as $$
   from public.gift_lists g
   where g.token = p_token;
 $$;
+
+-- Gift list v3: drawer details for guests (owner's note, bigger picture, game / Lego / book facts).
+create or replace function public.gift_list(p_token text)
+returns json language sql stable security definer set search_path = ''
+as $$
+  select json_build_object(
+    'title', g.title,
+    'items', coalesce((
+      select json_agg(json_build_object(
+        'id', i.id, 'type', i.type, 'title', i.title, 'creator', i.creator,
+        'detail', i.detail, 'photo', i.photo, 'reserved', r.item_id is not null,
+        'link', case when i.extra->>'url' ~ '^https?://' then i.extra->>'url' end,
+        'site', i.extra->>'site', 'price', i.price,
+        'note', nullif(btrim(i.note), ''),
+        'big', case when i.extra->>'bigImg' ~ '^https://' then i.extra->>'bigImg' end,
+        'info', json_strip_nulls(json_build_object(
+          'players', i.extra->>'players', 'time', i.extra->>'time', 'age', i.extra->>'age',
+          'pieces', i.extra->>'pieces', 'set', i.extra->>'set', 'publisher', i.extra->>'publisher',
+          'year', i.pub_year, 'pages', i.pages)))
+        order by i.created_at)
+      from public.items i
+      left join public.reservations r on r.item_id = i.id
+      where i.user_id = g.user_id and i.status = 'cadeau'), '[]'::json))
+  from public.gift_lists g
+  where g.token = p_token;
+$$;
