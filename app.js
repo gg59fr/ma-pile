@@ -1654,7 +1654,8 @@ async function bookLookup(q, isbn){
       fields: 'items(id,volumeInfo(title,subtitle,authors,imageLinks,pageCount,publishedDate,publisher,categories,industryIdentifiers,language,seriesInfo))' });
     if (lang) p.set('langRestrict', lang);
     if (GOOGLE_BOOKS_KEY) p.set('key', GOOGLE_BOOKS_KEY);
-    const d = await fetchJSON('https://www.googleapis.com/books/v1/volumes?' + p);
+    // One try only: without a key Google often answers "too many requests", and Open Library is already searching.
+    const d = await fetchWithRetry('https://www.googleapis.com/books/v1/volumes?' + p, 'json', 1);
     return (d.items || []).map(v => { const vi = v.volumeInfo || {};
       const ids = vi.industryIdentifiers || [], i13 = ids.find(x => x.type === 'ISBN_13'), i10 = ids.find(x => x.type === 'ISBN_10');
       return { title: vi.title + (vi.subtitle && vi.subtitle.length < 40 ? ' : ' + vi.subtitle : ''), authors: vi.authors || [], year: +((vi.publishedDate || '').slice(0, 4)) || null,
@@ -1663,16 +1664,17 @@ async function bookLookup(q, isbn){
         comic: /comics|graphic novel|bande dessin|manga/i.test((vi.categories || []).join(' ')), from: 'googlebooks' }; });
   };
   const ol = async () => {
-    const p = new URLSearchParams({ q: isbn ? 'isbn:' + clean : clean, limit: '20', fields: 'title,author_name,first_publish_year,cover_i,number_of_pages_median,isbn,publisher,subject' });
-    const d = await fetchJSON('https://openlibrary.org/search.json?' + p);
+    const p = new URLSearchParams({ q: isbn ? 'isbn:' + clean : clean, limit: '20', lang: 'fre', fields: 'title,author_name,first_publish_year,cover_i,number_of_pages_median,isbn,publisher,subject' });
+    const d = await fetchWithRetry('https://openlibrary.org/search.json?' + p, 'json', 1);
     return (d.docs || []).map(x => ({ title: x.title, authors: x.author_name || [], year: x.first_publish_year || null, pages: x.number_of_pages_median || null,
       publisher: (x.publisher || [])[0] || null, isbn: (x.isbn || []).find(i => /^97/.test(i)) || null,
       cover: x.cover_i ? `https://covers.openlibrary.org/b/id/${x.cover_i}-M.jpg` : null,
       comic: /comic|graphic novel|bande dessin|manga/i.test((x.subject || []).slice(0, 20).join(' ')), from: 'openlibrary' }));
   };
-  let rows = [];
-  try { rows = await google(isbn ? '' : 'fr'); if (!isbn && rows.length < 4) rows = rows.concat(await google('')); } catch (e) {}
-  if (!rows.length) { try { rows = await ol(); } catch (e) {} }
+  // Both sources at once: Google's editions first when it answers, Open Library's otherwise or in addition.
+  const [g, o] = await Promise.all([google(isbn ? '' : 'fr').catch(() => []), ol().catch(() => [])]);
+  let rows = g.concat(o);
+  if (!rows.length && !isbn) rows = await google('').catch(() => []);
   // One line per book: the same title and author come back once per edition; keep the one with a cover.
   const seen = new Map();
   for (const r of rows) {
