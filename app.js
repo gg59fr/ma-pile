@@ -283,7 +283,7 @@ function renderShelf(){
 /* ---------- fiche (sheet) ---------- */
 const find = id => state.items.find(i => i.id === id);
 function openSheet(id){
-  state.openId = id; state.delArmed = false; state.catalogOpen = state.accountOpen = state.gameSearchOpen = state.linkOpen = false;
+  state.openId = id; state.delArmed = false; state.catalogOpen = state.accountOpen = state.gameSearchOpen = state.linkOpen = state.addOpen = false;
   const it = find(id); if (!it) return;
   const T = Object.keys(TYPES);
   $('sheet').innerHTML = `
@@ -323,7 +323,7 @@ function openSheet(id){
   $('sClose').focus({preventScroll: true});
 }
 function closeSheet(){
-  if (state.accountOpen || state.catalogOpen || state.gameSearchOpen || state.linkOpen) { state.accountOpen = state.catalogOpen = state.gameSearchOpen = state.linkOpen = false; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = ''; return; }
+  if (state.accountOpen || state.catalogOpen || state.gameSearchOpen || state.linkOpen || state.addOpen) { state.accountOpen = state.catalogOpen = state.gameSearchOpen = state.linkOpen = state.addOpen = false; $('sheetWrap').hidden = true; $('sheet').innerHTML = ''; document.body.style.overflow = ''; return; }
   if (!state.openId) return;
   flushSave();
   const closed = state.openId;
@@ -525,7 +525,7 @@ function dataToBlob(u){
 function newBase(id, extra){
   const now = Date.now(), toCol = state.addTo === 'collection';
   const f = toCol ? state.colFilter : state.filter;
-  return { id, type: TYPES[f] ? f : 'livre', owned: toCol, ownedAt: toCol ? now : null,
+  return { id, type: state.addOpen && TYPES[ad.kind] ? ad.kind : TYPES[f] ? f : 'livre', owned: toCol, ownedAt: toCol ? now : null,
     status: toCol ? 'collection' : state.addTo === 'cadeau' ? 'cadeau' : 'pile',
     title: '', creator: '', detail: '', note: '', photo: null, plays: 0, extra: {}, createdAt: now, updatedAt: now, ...extra };
 }
@@ -1173,7 +1173,7 @@ function setMenu(open){
   $('addMenu').hidden = !open; $('fab').setAttribute('aria-expanded', String(open));
   if (open) $('addMenu').querySelector('[data-add]').focus({preventScroll: true});
 }
-$('fab').onclick = () => { if (!store) { toast('Encore un instant, tes fiches se chargent.'); return; } setMenu($('addMenu').hidden); };
+$('fab').onclick = () => { if (!store) { toast('Encore un instant, tes fiches se chargent.'); return; } openAdd(); };
 $('addMenu').addEventListener('click', e => {
   const to = e.target.closest('[data-to]'); if (to) { setAddTo(to.dataset.to); return; }
   const b = e.target.closest('[data-add]'); if (!b) return;
@@ -1197,7 +1197,7 @@ let lbReturn = null;
 function openPhoto(src, from){ lbReturn = from || null; const big = RB_THUMB.exec(src || ''); $('lbImg').src = big ? `${big[1]}/1000x800p.jpg` : src; $('lightbox').hidden = false; $('lbClose').focus({preventScroll: true}); }
 function closePhoto(){ if ($('lightbox').hidden) return false; $('lightbox').hidden = true; $('lbImg').removeAttribute('src'); if (lbReturn && document.contains(lbReturn)) lbReturn.focus({preventScroll: true}); lbReturn = null; return true; }
 $('lightbox').addEventListener('click', e => { e.stopPropagation(); closePhoto(); });
-document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('scanner').hidden) { closeScanner(); return; } if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen || state.catalogOpen || state.gameSearchOpen || state.linkOpen) closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('scanner').hidden) { closeScanner(); return; } if (closePhoto()) return; if (!$('addMenu').hidden) { setMenu(false); $('fab').focus(); return; } if (state.openId || state.accountOpen || state.catalogOpen || state.gameSearchOpen || state.linkOpen || state.addOpen) closeSheet(); });
 window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
 $('copyGifts').onclick = () => {
   const text = giftText(), ta = $('giftText');
@@ -1590,6 +1590,195 @@ $('sheet').addEventListener('keydown', e => { if (e.target.id === 'gsQ' && e.key
 $('sheet').addEventListener('click', e => {
   const add = e.target.closest('[data-gsadd]'); if (add) { gameAdd(add.dataset.gsadd, add.dataset.gsto); return; }
   if (e.target.closest('[data-gsmanual]')) gameManual();
+});
+
+/* ---------- The add sheet: one search for everything ----------
+   + opens this sheet. On top: where the new entry goes (collection, wish, gift). Then one search field:
+   a title finds books and comics (Google Books, then Open Library), board games (BoardGameGeek) and Lego
+   sets (catalogue); a set number goes to Lego, an ISBN to books, a pasted address to "add from a link".
+   With an empty field: scan a barcode, add a photo, or start an entry with no photo. */
+const ad = { q: '', kind: 'all', seq: 0, timer: null, books: null, games: null, lego: null, busy: {} };
+const AD_KINDS = [['all', 'Tout'], ['livre', 'Livres & BD'], ['jeu', 'Jeux'], ['lego', 'Lego']];
+const isUrl = q => /^(https?:\/\/|www\.)\S+$/i.test(q) || /https?:\/\/\S+/i.test(q) && q.split(/\s+/).length > 1;
+function openAdd(){
+  state.addOpen = true;
+  setAddTo(state.view === 'envies' ? (state.envTab === 'gifts' ? 'cadeau' : 'envie') : 'collection');
+  const f = state.view === 'collection' ? state.colFilter : state.filter;
+  ad.kind = f === 'livre' || f === 'bd' ? 'livre' : f === 'jeu' || f === 'lego' ? f : 'all';
+  Object.assign(ad, { q: '', books: null, games: null, lego: null, busy: {} });
+  $('sheet').innerHTML = `
+    <div class="sheet-bar"><h2 id="sheetTitle">Ajouter</h2>
+      <button type="button" class="iconbtn" id="sClose" aria-label="Fermer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div class="seg ad-to" role="radiogroup" aria-label="Où l’ajouter" id="adTo"></div>
+    <label for="adQ" class="sr">Titre, numéro de set Lego, ISBN ou lien</label>
+    <div class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="adQ" type="search" inputmode="search" enterkeyhint="search" autocomplete="off" placeholder="Titre, n° de set Lego ou lien…"></div>
+    <div class="chips lk-wrap" role="group" aria-label="Type" id="adKinds"></div>
+    <div id="adOut" aria-live="polite"></div>`;
+  $('sheetWrap').hidden = false; document.body.style.overflow = 'hidden';
+  renderAdd();
+}
+function adKindOf(q){
+  if (/^\d{3,7}(-\d+)?$/.test(q)) return 'set';
+  if (/^(97[89])?\d{9}[\dX]$/i.test(q.replace(/[-\s]/g, ''))) return 'isbn';
+  return 'text';
+}
+async function addSearch(){
+  const q = ad.q.trim(), seq = ++ad.seq;
+  ad.books = ad.games = ad.lego = null; ad.busy = {};
+  if (q.length < 2) { renderAdd(); return; }
+  if (isUrl(q)) { openLinkSheet((q.match(/https?:\/\/\S+/i) || [q])[0].replace(/^www\./i, 'https://www.')); return; }
+  const k = adKindOf(q), want = x => ad.kind === 'all' || ad.kind === x;
+  const jobs = [];
+  // A set number always searches Lego, an ISBN always searches books, whatever type is selected.
+  if ((want('lego') && k !== 'isbn') || k === 'set') jobs.push(['lego', legoLookup(q)]);
+  if ((want('livre') && k !== 'set') || k === 'isbn') jobs.push(['books', bookLookup(q, k === 'isbn')]);
+  if (want('jeu') && k === 'text' && q.length >= 3) jobs.push(['games', gameLookup(q)]);
+  jobs.forEach(([key, p]) => { ad.busy[key] = true; p.then(rows => { if (seq !== ad.seq) return; ad[key] = rows; ad.busy[key] = false; renderAdd(); }); });
+  renderAdd();
+}
+async function legoLookup(q){
+  let query = sb.from('lego_sets').select(LEGO_COLS);
+  if (/^\d{3,7}(-\d+)?$/.test(q)) query = query.eq('num', q.split('-')[0]).order('set_num').limit(10);
+  else query = query.ilike('name', `%${q.replace(/[%_]/g, ' ')}%`).gt('pieces', 0).order('year', {ascending: false}).limit(30);
+  const { data, error } = await query; return error ? [] : data || [];
+}
+async function gameLookup(q){
+  try { const { data } = await sb.functions.invoke('bgg-game', { body: { mode: 'search', q } }); return (data && data.results) || []; } catch (e) { return []; }
+}
+// Books and comics: Google Books first (French editions first), Open Library when Google has nothing.
+async function bookLookup(q, isbn){
+  const clean = isbn ? q.replace(/[-\s]/g, '') : q;
+  const google = async lang => {
+    const p = new URLSearchParams({ q: isbn ? 'isbn:' + clean : clean, maxResults: '20', printType: 'books', orderBy: 'relevance',
+      fields: 'items(id,volumeInfo(title,subtitle,authors,imageLinks,pageCount,publishedDate,publisher,categories,industryIdentifiers,language,seriesInfo))' });
+    if (lang) p.set('langRestrict', lang);
+    if (GOOGLE_BOOKS_KEY) p.set('key', GOOGLE_BOOKS_KEY);
+    const d = await fetchJSON('https://www.googleapis.com/books/v1/volumes?' + p);
+    return (d.items || []).map(v => { const vi = v.volumeInfo || {};
+      const ids = vi.industryIdentifiers || [], i13 = ids.find(x => x.type === 'ISBN_13'), i10 = ids.find(x => x.type === 'ISBN_10');
+      return { title: vi.title + (vi.subtitle && vi.subtitle.length < 40 ? ' : ' + vi.subtitle : ''), authors: vi.authors || [], year: +((vi.publishedDate || '').slice(0, 4)) || null,
+        pages: vi.pageCount || null, publisher: vi.publisher || null, isbn: (i13 || i10 || {}).identifier || null,
+        cover: vi.imageLinks ? `https://books.google.com/books/content?id=${encodeURIComponent(v.id)}&printsec=frontcover&img=1&zoom=1` : null,
+        comic: /comics|graphic novel|bande dessin|manga/i.test((vi.categories || []).join(' ')), from: 'googlebooks' }; });
+  };
+  const ol = async () => {
+    const p = new URLSearchParams({ q: isbn ? 'isbn:' + clean : clean, limit: '20', fields: 'title,author_name,first_publish_year,cover_i,number_of_pages_median,isbn,publisher,subject' });
+    const d = await fetchJSON('https://openlibrary.org/search.json?' + p);
+    return (d.docs || []).map(x => ({ title: x.title, authors: x.author_name || [], year: x.first_publish_year || null, pages: x.number_of_pages_median || null,
+      publisher: (x.publisher || [])[0] || null, isbn: (x.isbn || []).find(i => /^97/.test(i)) || null,
+      cover: x.cover_i ? `https://covers.openlibrary.org/b/id/${x.cover_i}-M.jpg` : null,
+      comic: /comic|graphic novel|bande dessin|manga/i.test((x.subject || []).slice(0, 20).join(' ')), from: 'openlibrary' }));
+  };
+  let rows = [];
+  try { rows = await google(isbn ? '' : 'fr'); if (!isbn && rows.length < 4) rows = rows.concat(await google('')); } catch (e) {}
+  if (!rows.length) { try { rows = await ol(); } catch (e) {} }
+  // One line per book: the same title and author come back once per edition; keep the one with a cover.
+  const seen = new Map();
+  for (const r of rows) {
+    if (!r.title) continue;
+    const key = normT(r.title) + '|' + normT(r.authors[0] || '');
+    const prev = seen.get(key);
+    if (!prev || (!prev.cover && r.cover)) seen.set(key, prev && !r.cover ? prev : { ...r, pages: r.pages || (prev && prev.pages) || null });
+  }
+  return [...seen.values()].slice(0, 12);
+}
+function adMine(type, keyOf){ return new Map(state.items.filter(i => i.type === type || (type === 'livre' && i.type === 'bd')).map(i => [keyOf(i), i])); }
+function adPill(it){ return `<button type="button" class="pill-btn ${it.owned ? 'own' : ''}" data-open="${esc(it.id)}">${it.owned ? 'Dans ma collection' : it.status === 'cadeau' ? 'Liste cadeaux' : STATUS[it.status] || 'En envie'}</button>`; }
+const adBtn = (key, id) => `<button type="button" class="btn sun ad-add" data-adadd="${key}" data-adid="${esc(String(id))}" aria-label="Ajouter">Ajouter</button>`;
+function renderAdd(){
+  const out = $('adOut'); if (!out) return;
+  const where = [['collection', 'Collection', '<path d="m5 12 5 5 9-10"/>'], ['envie', 'Envie', '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>'], ['cadeau', 'Cadeau', '<rect x="4" y="9" width="16" height="11" rx="1.5"/><path d="M3 9h18M12 9v11"/>']];
+  $('adTo').innerHTML = where.map(([k, l, ic]) => `<button type="button" role="radio" data-adto="${k}" aria-checked="${state.addTo === k}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ic}</svg>${l}</button>`).join('');
+  $('adKinds').innerHTML = AD_KINDS.map(([k, l]) => `<button type="button" class="chip" data-adkind="${k}" aria-pressed="${ad.kind === k}">${l}</button>`).join('');
+  const q = ad.q.trim();
+  if (q.length < 2) {
+    out.innerHTML = `<div class="ad-tiles">
+      <button type="button" class="ad-tile" data-add="scan"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M8 8v8M11 8v8M14 8v8M17 8v8"/></svg>Scanner<span>code-barres</span></button>
+      <button type="button" class="ad-tile" data-add="lib"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8a2 2 0 0 1 2-2h2l1.5-2h5L16 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.5"/></svg>Photo<span>appareil ou photothèque</span></button>
+      <button type="button" class="ad-tile" data-add="none"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>Sans photo<span>je tape le titre</span></button>
+    </div>
+    <p class="sub ad-hint">Tape un titre pour chercher un livre, une BD, un jeu ou un Lego. Un numéro de set ou un ISBN marchent aussi, et un lien colle une page de boutique.</p>`;
+    return;
+  }
+  const section = (key, label, rows, row, more) => {
+    if (ad.busy[key]) return `<section class="ad-sec"><h3>${label}</h3><p class="busy"><span class="spin"></span>Recherche…</p></section>`;
+    if (!rows) return '';
+    if (!rows.length) return ad.kind === 'all' ? '' : `<section class="ad-sec"><h3>${label}</h3><p class="sub">Rien trouvé. Essaie un autre mot du titre.</p></section>`;
+    const shown = ad.kind === 'all' ? rows.slice(0, 3) : rows;
+    return `<section class="ad-sec"><h3>${label}</h3><ul class="rows">${shown.map(row).join('')}</ul>
+      ${ad.kind === 'all' && rows.length > 3 ? `<button type="button" class="link" data-adkind="${more}">Voir les ${rows.length} résultats</button>` : ''}</section>`;
+  };
+  const myBooks = adMine('livre', i => normT(i.title) + '|' + normT((i.creator || '').split(',')[0]));
+  const myGames = adMine('jeu', i => String((i.extra || {}).bgg || ''));
+  const myLego = adMine('lego', i => legoNum(i));
+  const html = [
+    section('books', 'Livres et BD', ad.books, (b, n) => {
+      const it = myBooks.get(normT(b.title) + '|' + normT(b.authors[0] || ''));
+      const bits = [b.comic ? 'BD' : null, b.authors.slice(0, 2).join(', '), b.year, b.pages && `${b.pages} p.`].filter(Boolean).join(' · ');
+      return `<li class="cat-row"><span class="mini" style="--c:var(--c-${b.comic ? 'bd' : 'livre'})">${b.cover ? `<img src="${esc(b.cover)}" alt="" loading="lazy">` : ''}</span>
+        <span class="meta"><span class="t">${esc(b.title)}</span><span class="w">${esc(bits)}</span></span>
+        <span class="cat-act">${it ? adPill(it) : adBtn('book', ad.books.indexOf(b))}</span></li>`; }, 'livre'),
+    section('games', 'Jeux de société', ad.games, g => {
+      const it = myGames.get(String(g.bgg));
+      const bits = [g.fr ? `VF ${g.year || ''}`.trim() : g.year, g.publisher, g.players && `${g.players} j.`, g.expansion && 'extension'].filter(Boolean).join(' · ');
+      return `<li class="cat-row"><span class="mini" style="--c:var(--c-jeu)">${g.thumb ? `<img src="${esc(g.thumb)}" alt="" loading="lazy">` : ''}</span>
+        <span class="meta"><span class="t">${esc(g.name)}</span><span class="w">${esc(bits)}</span></span>
+        <span class="cat-act">${it ? adPill(it) : adBtn('game', g.bgg)}</span></li>`; }, 'jeu'),
+    section('lego', 'Lego', ad.lego, l => {
+      const it = myLego.get(l.num);
+      return `<li class="cat-row"><span class="mini" style="--c:var(--c-lego)">${l.img ? `<img src="${esc(legoThumb(l.img))}" alt="" loading="lazy">` : ''}</span>
+        <span class="meta"><span class="t">${esc(l.name)}</span><span class="w">${esc(l.num)} · ${l.year || '—'}${l.pieces ? ` · ${fmtN(l.pieces)} pièces` : ''}</span></span>
+        <span class="cat-act">${it ? adPill(it) : adBtn('lego', l.set_num)}</span></li>`; }, 'lego'),
+  ].join('');
+  const waiting = Object.values(ad.busy).some(Boolean);
+  out.innerHTML = (html || (waiting ? '' : `<p class="sub">Rien trouvé${ad.kind !== 'all' ? ' dans ce type' : ''}. Vérifie l’orthographe, ou ajoute-le à la main.</p>`)) +
+    `<button type="button" class="btn ad-manual" data-admanual>Ajouter « ${esc(q)} » à la main</button>` +
+    (ad.games && ad.games.length ? '<p class="chart-note">Jeux : <a class="link inl" href="https://boardgamegeek.com" target="_blank" rel="noopener">Powered by BGG</a>.</p>' : '');
+}
+function addFrom(key, id){
+  if (!store) return;
+  let it = null, label = '';
+  const nid = store.newId(), base = newBase(nid);
+  if (key === 'book') {
+    const b = ad.books[+id]; if (!b) return;
+    it = { ...base, type: b.comic ? 'bd' : 'livre', title: b.title, creator: b.authors.slice(0, 2).join(', '), isbn: b.isbn || undefined,
+      photo: b.cover, coverFrom: b.cover ? b.from : null, pages: b.pages, pubYear: b.year, publisher: b.publisher };
+    label = b.title;
+  } else if (key === 'game') {
+    const g = (ad.games || []).find(r => String(r.bgg) === String(id)); if (!g) return;
+    it = { ...base, type: 'jeu', ...gameFields(g) }; label = g.name;
+  } else if (key === 'lego') {
+    const l = (ad.lego || []).find(r => r.set_num === id); if (!l) return;
+    it = { ...base, type: 'lego', ...legoFields(l) }; label = l.name;
+  }
+  if (!it) return;
+  createItem(it); renderAll(); renderAdd();
+  toast(`${label} ajouté ${ADDED_TO[state.addTo]}`);
+  if (key === 'book') autoEnrich(nid);       // genre, and pages or year if this edition lacked them
+}
+$('sheet').addEventListener('input', e => {
+  if (e.target.id !== 'adQ') return;
+  ad.q = e.target.value; clearTimeout(ad.timer);
+  if (isUrl(ad.q.trim())) { addSearch(); return; }       // a pasted address opens "add from a link" at once
+  ad.timer = setTimeout(addSearch, 600);
+});
+$('sheet').addEventListener('keydown', e => { if (e.target.id === 'adQ' && e.key === 'Enter') { e.preventDefault(); clearTimeout(ad.timer); e.target.blur(); addSearch(); } });
+$('sheet').addEventListener('click', e => {
+  if (!state.addOpen) return;
+  const to = e.target.closest('[data-adto]'); if (to) { setAddTo(to.dataset.adto); renderAdd(); return; }
+  const k = e.target.closest('[data-adkind]'); if (k) { ad.kind = k.dataset.adkind; addSearch(); $('sheet').scrollTop = 0; return; }
+  const a = e.target.closest('[data-adadd]'); if (a) { addFrom(a.dataset.adadd, a.dataset.adid); return; }
+  if (e.target.closest('[data-admanual]')) {
+    const title = ad.q.trim(), kind = ad.kind === 'all' ? null : ad.kind;
+    const id = store.newId(), it = { ...newBase(id), title, ...(kind ? { type: kind } : {}) };
+    state.addOpen = false; showTarget(); createItem(it); renderAll(); openSheet(id); return;
+  }
+  const t = e.target.closest('.ad-tile'); if (!t) return;
+  const what = t.dataset.add;
+  if (what === 'scan') { closeSheet(); openScanner(); }
+  else if (what === 'lib') $('lib').click();          // iPhone offers: take a photo, photo library or file
+  else { state.addOpen = true; const id = store.newId(), it = newBase(id); state.addOpen = false; showTarget(); createItem(it); renderAll(); openSheet(id); setTimeout(() => $('fTitle') && $('fTitle').focus(), 50); }
 });
 
 /* ---------- Add from a link ----------

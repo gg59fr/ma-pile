@@ -361,3 +361,20 @@ button.pub-tog{cursor:pointer}
 .d-btns{display:flex;flex-wrap:wrap;gap:8px}
 .pub-tog .meta{min-width:0}
 .pub-tog .meta .w{white-space:normal}
+
+/* Add sheet: one search for everything */
+.ad-to{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border:2px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}
+.ad-to button{display:flex;align-items:center;justify-content:center;gap:6px;min-height:44px;border:0;background:none;font:inherit;font-weight:700;font-size:14px;color:var(--ink);cursor:pointer}
+.ad-to button+button{border-left:2px solid var(--line)}
+.ad-to button[aria-checked="true"]{background:var(--ink);color:var(--surface)}
+.ad-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.ad-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:112px;padding:12px 6px;border:2px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:3px 3px 0 var(--shadow);font:inherit;font-weight:700;font-size:15px;color:var(--ink);text-align:center;cursor:pointer}
+.ad-tile span{font-weight:500;font-size:12px;color:var(--muted);line-height:1.25}
+.ad-tile:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--shadow)}
+.ad-hint{margin:14px 2px 0}
+#adOut{display:flex;flex-direction:column;gap:18px}
+.ad-sec{display:flex;flex-direction:column;gap:8px}
+.ad-sec h3{margin:0;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.ad-sec .link{align-self:flex-start;padding:4px 0}
+.ad-add{min-height:40px;padding:0 14px;font-size:14px}
+.ad-manual{align-self:stretch;justify-content:center}
